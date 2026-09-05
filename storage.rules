@@ -1,0 +1,21 @@
+rules_version = '2';
+service firebase.storage {
+  function activeMember(clinicId) {
+    return request.auth != null &&
+      firestore.exists(/databases/(default)/documents/clinics/$(clinicId)/members/$(request.auth.uid)) &&
+      (firestore.get(/databases/(default)/documents/clinics/$(clinicId)/members/$(request.auth.uid)).data.status == 'Ativo' ||
+       !firestore.get(/databases/(default)/documents/clinics/$(clinicId)/members/$(request.auth.uid)).data.keys().hasAny(['status']));
+  }
+  function recordsViewer(clinicId) {
+    return activeMember(clinicId) &&
+      (firestore.get(/databases/(default)/documents/clinics/$(clinicId)/members/$(request.auth.uid)).data.role in ['owner','admin'] ||
+       firestore.get(/databases/(default)/documents/clinics/$(clinicId)/members/$(request.auth.uid)).data.permissions.hasAny(['Prontuários','records.view','records.create','records.edit','records.delete']));
+  }
+  match /b/{bucket}/o {
+    match /clinics/{clinicId}/patients/{patientId}/attachments/{fileName} {
+      allow read: if recordsViewer(clinicId);
+      allow create: if recordsViewer(clinicId) && request.resource.size <= 15 * 1024 * 1024;
+      allow delete: if recordsViewer(clinicId);
+    }
+  }
+}

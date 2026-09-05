@@ -1,0 +1,106 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function signedIn() { return request.auth != null; }
+    function member(clinicId) {
+      return signedIn() &&
+        exists(/databases/$(database)/documents/clinics/$(clinicId)/members/$(request.auth.uid)) &&
+        (get(/databases/$(database)/documents/clinics/$(clinicId)/members/$(request.auth.uid)).data.status == 'Ativo' ||
+        !get(/databases/$(database)/documents/clinics/$(clinicId)/members/$(request.auth.uid)).data.keys().hasAny(['status']));
+    }
+    function admin(clinicId) {
+      return member(clinicId) &&
+        get(/databases/$(database)/documents/clinics/$(clinicId)/members/$(request.auth.uid)).data.role in ['owner','admin'];
+    }
+    function permission(clinicId, module, action) {
+      return admin(clinicId) ||
+        get(/databases/$(database)/documents/clinics/$(clinicId)/members/$(request.auth.uid)).data.permissions.hasAny([module, action]);
+    }
+
+    // Permite a consulta collectionGroup("members") usada no login,
+    // mas somente para o próprio documento de vínculo do usuário.
+    // O filtro where("uid", "==", request.auth.uid) no App é obrigatório
+    // para que essa consulta seja compatível com esta regra.
+    match /{path=**}/members/{uid} {
+      allow read: if signedIn() && resource.data.uid == request.auth.uid;
+    }
+
+    match /clinics/{clinicId} {
+      allow create: if signedIn() && request.auth.uid == clinicId
+        && request.resource.data.ownerUid == request.auth.uid;
+      allow read: if member(clinicId) ||
+        (signedIn() && request.auth.uid == clinicId);
+      allow update: if admin(clinicId) &&
+        (resource.data.ownerUid == request.auth.uid || resource.data.ownerId == request.auth.uid);
+      allow delete: if admin(clinicId) &&
+        (resource.data.ownerUid == request.auth.uid || resource.data.ownerId == request.auth.uid);
+
+      match /members/{uid} {
+        allow create: if signedIn() &&
+          ((uid == request.auth.uid
+            && request.resource.data.uid == request.auth.uid
+            && request.resource.data.role == 'owner')
+          || (admin(clinicId)
+            && request.resource.data.uid == uid
+            && request.resource.data.role is string
+            && request.resource.data.role != 'owner'))
+          && !exists(/databases/$(database)/documents/clinics/$(clinicId)/members/$(uid));
+        allow read: if (signedIn() && resource.data.uid == request.auth.uid) || admin(clinicId);
+        allow update, delete: if admin(clinicId);
+      }
+
+      match /patients/{id} {
+        allow read: if permission(clinicId, 'Pacientes', 'patients.view') || permission(clinicId, 'Prontuários', 'records.view');
+        allow create: if permission(clinicId, 'Pacientes', 'patients.create') && request.resource.data.keys().hasAll(['name','status']);
+        allow update: if permission(clinicId, 'Pacientes', 'patients.edit');
+        allow delete: if permission(clinicId, 'Pacientes', 'patients.delete');
+      }
+      match /appointments/{id} {
+        allow read: if permission(clinicId, 'Agenda', 'appointments.view');
+        allow create: if permission(clinicId, 'Agenda', 'appointments.create');
+        allow update: if permission(clinicId, 'Agenda', 'appointments.edit');
+        allow delete: if permission(clinicId, 'Agenda', 'appointments.delete');
+      }
+      match /finances/{id} {
+        allow read: if permission(clinicId, 'Financeiro', 'finances.view');
+        allow create: if permission(clinicId, 'Financeiro', 'finances.create');
+        allow update: if permission(clinicId, 'Financeiro', 'finances.edit') || permission(clinicId, 'Financeiro', 'finances.payments');
+        allow delete: if permission(clinicId, 'Financeiro', 'finances.delete');
+      }
+      match /stock/{id} {
+        allow read: if permission(clinicId, 'Estoque', 'stock.view');
+        allow create: if permission(clinicId, 'Estoque', 'stock.create');
+        allow update: if permission(clinicId, 'Estoque', 'stock.edit') || permission(clinicId, 'Estoque', 'stock.in') || permission(clinicId, 'Estoque', 'stock.out');
+        allow delete: if permission(clinicId, 'Estoque', 'stock.delete');
+      }
+      match /professionals/{id} {
+        allow read: if permission(clinicId, 'Profissionais', 'professionals.view');
+        allow create: if permission(clinicId, 'Profissionais', 'professionals.create');
+        allow update: if permission(clinicId, 'Profissionais', 'professionals.edit');
+        allow delete: if permission(clinicId, 'Profissionais', 'professionals.delete') || permission(clinicId, 'Profissionais', 'professionals.block');
+      }
+      match /records/{id} {
+        allow read: if permission(clinicId, 'Prontuários', 'records.view');
+        allow create: if permission(clinicId, 'Prontuários', 'records.create') && request.resource.data.isLocked == false;
+        allow update: if permission(clinicId, 'Prontuários', 'records.edit')
+          && resource.data.isLocked == false
+          && request.resource.data.isLocked == false;
+        allow delete: if permission(clinicId, 'Prontuários', 'records.delete') && resource.data.isLocked == false;
+      }
+      match /auditLogs/{id} {
+        allow read: if admin(clinicId);
+        allow create: if member(clinicId);
+        allow update, delete: if false;
+      }
+      match /whatsappOutbox/{id} {
+        allow create: if member(clinicId);
+        allow read: if admin(clinicId);
+        allow update, delete: if false;
+      }
+      match /appointment_events/{id} {
+        allow read: if permission(clinicId, 'Agenda', 'appointments.history');
+        allow write: if false;
+      }
+    }
+  }
+}

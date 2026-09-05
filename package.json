@@ -1,0 +1,21 @@
+{
+  "name": "odontoflow",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "firebase:deploy": "firebase deploy"
+  },
+  "dependencies": {
+    "@vitejs/plugin-react": "^5.0.4",
+    "firebase": "latest",
+    "lucide-react": "latest",
+    "react": "^19.0.1",
+    "react-dom": "^19.0.1",
+    "vite": "^6.4.3"
+  },
+  "devDependencies": {}
+}
