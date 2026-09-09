@@ -1,5 +1,5 @@
 import React,{useEffect,useMemo,useState} from "react";
-import {LayoutDashboard,Users,CalendarDays,FileText,DollarSign,Package,UserCog,BarChart3,Settings,Search,Plus,Trash2,CheckCircle,Clock,Stethoscope,Menu,LogOut,RefreshCw,ShieldCheck,ArrowDownToLine,ArrowUpFromLine,AlertTriangle,Pencil,Boxes,Paperclip,UserRound,HeartPulse,Image as ImageIcon,FileCheck,Download,Eye,ClipboardList,EyeOff,ChevronLeft,ChevronRight,UserPlus,X,MessageCircle} from "lucide-react";
+import {LayoutDashboard,Users,CalendarDays,FileText,DollarSign,Package,UserCog,BarChart3,Settings,Search,Plus,Trash2,CheckCircle,Clock,Stethoscope,Menu,LogOut,RefreshCw,ShieldCheck,ArrowDownToLine,ArrowUpFromLine,AlertTriangle,Pencil,Boxes,Paperclip,UserRound,HeartPulse,Image as ImageIcon,FileCheck,Download,Eye,ClipboardList,EyeOff,ChevronLeft,ChevronRight,UserPlus,X,MessageCircle,ZoomIn,ZoomOut,ExternalLink} from "lucide-react";
 import { observeAuth, login, register, resetPassword, logout } from "./auth";
 import { firebaseEnabled, storage, db } from "./firebase";
 import { collectionGroup, getDocs, query, where } from "firebase/firestore";
@@ -7,8 +7,22 @@ import { ref as storageRef, uploadBytes, getDownloadURL, deleteObject } from "fi
 import { bootstrapClinic, getClinic, saveClinic, subscribeCollection, addItem, updateItem, removeItem, addClinicMember, getClinicMembers, updateClinicMember } from "./firestore";
 import { createEmployeeAccount } from "./auth";
 import { enqueueAppointmentConfirmation } from "./services/whatsapp";
+import {
+  isSupabaseConfigured,
+  uploadAttachmentFile,
+  getSignedAttachmentUrl,
+  downloadAttachmentFile,
+  deleteAttachmentFile,
+  validateAttachmentFile,
+  suggestCategoryFromFileName,
+  formatFileSize,
+  ATTACHMENT_CATEGORIES
+} from "./services/supabaseStorage";
 import { seed, today, money } from "./data";
 import "./styles.css";
+// APK download configuration
+const APK_DOWNLOAD_URL = "https://github.com/joaovitortomazidb-ship-it/OrvittaClinic/releases/download/v1.0.0/orvittaclinic.apk";
+const APK_VERSION = "1.0.0";
 
 function AuthScreen(){
   const [mode,setMode]=useState("login"),[clinic,setClinic]=useState(""),[name,setName]=useState(""),[phone,setPhone]=useState(""),[email,setEmail]=useState(""),[password,setPassword]=useState(""),[confirmPassword,setConfirmPassword]=useState(""),[error,setError]=useState(""),[busy,setBusy]=useState(false),[showPassword,setShowPassword]=useState(false),[showConfirmPassword,setShowConfirmPassword]=useState(false);
@@ -287,26 +301,238 @@ function AnamnesisForm({anam,setAnam,patient,saving,save}){
 }
 
 function Records({data,write,update,remove,userId,uid,initialPatientId,can}){
- const [patient,setPatient]=useState(()=>data.patients.find(p=>p.id===initialPatientId)||null),[tab,setTab]=useState("overview"),[note,setNote]=useState(""),[complaint,setComplaint]=useState(""),[diagnosis,setDiagnosis]=useState(""),[toothStates,setToothStates]=useState({}),[saving,setSaving]=useState(false),[attach,setAttach]=useState({category:"Outros",name:"",description:""});
+ const [patient,setPatient]=useState(()=>data.patients.find(p=>p.id===initialPatientId)||null),[tab,setTab]=useState("overview"),[note,setNote]=useState(""),[complaint,setComplaint]=useState(""),[diagnosis,setDiagnosis]=useState(""),[toothStates, setToothStates] = useState({});
+  const [infantToothStates, setInfantToothStates] = useState({});
+  // odontogramMode removed – mixed dentition always active
+  const permanentUpper = [11,12,13,14,15,16,17,18,21,22,23,24,25,26,27,28];
+  const permanentLower = [31,32,33,34,35,36,37,38,41,42,43,44,45,46,47,48];
+  const infantUpperRight = [55,54,53,52,51];
+  const infantUpperLeft = [61,62,63,64,65];
+  const infantLowerLeft = [71,72,73,74,75];
+  const infantLowerRight = [81,82,83,84,85];
+const [saving,setSaving]=useState(false),[attach,setAttach]=useState({category:"Outros",name:"",description:""});
  const [anam,setAnam]=useState(anamnesisDefaults);
  const [editPatient,setEditPatient]=useState(false),[patientForm,setPatientForm]=useState({}),[attachmentStatus,setAttachmentStatus]=useState(""),[localAttachments,setLocalAttachments]=useState([]);
+ const [selectedFile,setSelectedFile]=useState(null),[selectedPreview,setSelectedPreview]=useState(null),[uploadProgress,setUploadProgress]=useState(0);
+ const [signedUrls,setSignedUrls]=useState({});
+ const [previewModal,setPreviewModal]=useState({open:false,item:null,url:"",zoom:1,inverted:false});
  const openPatientEdit=()=>{if(!patient)return;setPatientForm({name:patient.name||"",phone:patient.phone||"",email:patient.email||"",birth:patient.birth||"",cpf:patient.cpf||"",rg:patient.rg||"",address:patient.address||"",responsible:patient.responsible||"",profession:patient.profession||"",notes:patient.notes||""});setEditPatient(true)};
  const savePatient=async()=>{if(!patientForm.name?.trim())return;await update("patients",patient.id,{...patientForm,name:patientForm.name.trim(),status:patient.status||"Ativo"});setPatient(p=>({...p,...patientForm,name:patientForm.name.trim()}));setEditPatient(false);};
- const permanentUpper=[18,17,16,15,14,13,12,11,21,22,23,24,25,26,27,28], permanentLower=[48,47,46,45,44,43,42,41,31,32,33,34,35,36,37,38];
- const statuses=[{key:"healthy",label:"Hígido",symbol:"",className:"healthy"},{key:"caries",label:"Cárie",symbol:"C",className:"caries"},{key:"restored",label:"Restaurado",symbol:"R",className:"restored"},{key:"planned",label:"Planejado",symbol:"P",className:"planned"},{key:"missing",label:"Ausente",symbol:"A",className:"missing"}];
+
+ const statuses=[
+  {key:"healthy",label:"Hígido",symbol:"",className:"healthy"},
+  {key:"caries",label:"Cárie",symbol:"C",className:"caries"},
+  {key:"restored",label:"Restaurado",symbol:"R",className:"restored"},
+  {key:"fracture",label:"Fratura",symbol:"F",className:"fracture"},
+  {key:"filled",label:"Obturação",symbol:"O",className:"filled"},
+  {key:"missing",label:"Ausente",symbol:"A",className:"missing"}
+];
  useEffect(()=>{if(initialPatientId){const target=data.patients.find(p=>p.id===initialPatientId);if(target)setPatient(target);}},[initialPatientId,data.patients]);
- useEffect(()=>{if(!patient){setToothStates({});setAnam(anamnesisDefaults);return;}const saved=data.records.find(r=>r.kind==="odontogram"&&r.patientId===patient.id);setToothStates(saved?.toothStates||{});const a=data.records.find(r=>r.kind==="anamnesis"&&r.patientId===patient.id);setAnam({...anamnesisDefaults,...(a?.data||{}),alertDetails:{...(a?.data?.alertDetails||{})}});const latest=[...data.records].filter(r=>r.patientId===patient.id&&r.kind==="evolution").sort((a,b)=>String(b.createdAt||b.date||"").localeCompare(String(a.createdAt||a.date||"")))[0];setComplaint(latest?.complaint||"");setDiagnosis(latest?.diagnosis||"");},[patient,data.records]);
- const cycleTooth=t=>{const current=toothStates[t]||"healthy",i=statuses.findIndex(x=>x.key===current);setToothStates(x=>({...x,[t]:statuses[(i+1)%statuses.length].key}));};
+ useEffect(()=>{if(!patient){setToothStates({});setAnam(anamnesisDefaults);return;}const saved=data.records.find(r=>r.kind==="odontogram"&&r.patientId===patient.id);setToothStates(saved?.toothStates||{});
+    setInfantToothStates(saved?.infantToothStates||{});const a=data.records.find(r=>r.kind==="anamnesis"&&r.patientId===patient.id);setAnam({...anamnesisDefaults,...(a?.data||{}),alertDetails:{...(a?.data?.alertDetails||{})}});const latest=[...data.records].filter(r=>r.patientId===patient.id&&r.kind==="evolution").sort((a,b)=>String(b.createdAt||b.date||"").localeCompare(String(a.createdAt||a.date||"")))[0];setComplaint(latest?.complaint||"");setDiagnosis(latest?.diagnosis||"");},[patient,data.records]);
+const cycleTooth = t => {
+  const current = toothStates[t] || "healthy";
+  const i = statuses.findIndex(x => x.key === current);
+  setToothStates(x => ({ ...x, [t]: statuses[(i + 1) % statuses.length].key }));
+};
+
+const cycleInfant = t => {
+  const current = infantToothStates[t] || "healthy";
+  const i = statuses.findIndex(x => x.key === current);
+  setInfantToothStates(x => ({ ...x, [t]: statuses[(i + 1) % statuses.length].key }));
+};
  const saveOdontogram=async()=>{if(!patient)return;setSaving(true);const existing=data.records.find(r=>r.kind==="odontogram"&&r.patientId===patient.id),payload={kind:"odontogram",patientId:patient.id,patient:patient.name,toothStates,date:today(),isLocked:false};if(existing)await update("records",existing.id,payload);else await write("records",payload);setSaving(false)};
  const saveEvolution=async()=>{if(!patient||(!note.trim()&&!complaint.trim()&&!diagnosis.trim()))return;await write("records",{kind:"evolution",patientId:patient.id,patient:patient.name,note:note.trim(),complaint:complaint.trim(),diagnosis:diagnosis.trim(),date:today(),isLocked:false});setNote("");};
  const saveAnamnesis=async()=>{if(!patient)return;setSaving(true);const existing=data.records.find(r=>r.kind==="anamnesis"&&r.patientId===patient.id),payload={kind:"anamnesis",clinicId:userId,uid,patientId:patient.id,patient:patient.name,data:{...(existing?.data||{}),...anam},date:today(),isLocked:false};if(existing)await update("records",existing.id,payload);else await write("records",payload);setSaving(false)};
- useEffect(()=>{setLocalAttachments([]);setAttachmentStatus("");},[patient?.id]);
+ useEffect(()=>{setLocalAttachments([]);setAttachmentStatus("");setSelectedFile(null);setSelectedPreview(null);setUploadProgress(0);},[patient?.id]);
  const storedAttachments=data.records.filter(r=>r.kind==="attachment"&&String(r.patientId)===String(patient?.id));
  const attachments=[...storedAttachments,...localAttachments.filter(local=>!storedAttachments.some(stored=>stored.id===local.id))].sort((a,b)=>String(b.date||"").localeCompare(String(a.date||"")));
- const upload=async e=>{const file=e.target.files?.[0];if(!file||!patient)return;if(file.size>15*1024*1024){setAttachmentStatus("O arquivo deve ter no máximo 15 MB.");alert("O arquivo deve ter no máximo 15 MB.");e.target.value="";return;}if(!firebaseEnabled||!storage){setAttachmentStatus("Armazenamento de arquivos não configurado.");alert("Armazenamento de arquivos não configurado.");e.target.value="";return;}setSaving(true);setAttachmentStatus("Enviando arquivo...");let path="";try{path=`clinics/${userId}/patients/${patient.id}/attachments/${Date.now()}-${file.name.replace(/[^a-zA-Z0-9._-]/g,"_")}`;const fileRef=storageRef(storage,path);await uploadBytes(fileRef,file,{contentType:file.type||"application/octet-stream"});const url=await getDownloadURL(fileRef);const attachment={kind:"attachment",clinicId:userId,uid,isLocked:false,patientId:patient.id,patient:patient.name,name:attach.name.trim()||file.name,category:attach.category,description:attach.description.trim(),fileName:file.name,mimeType:file.type||"application/octet-stream",size:file.size,url,storagePath:path,date:today()};const id=await write("records",attachment);setLocalAttachments(current=>[...current,{...attachment,id}]);setAttach({category:"Outros",name:"",description:""});setAttachmentStatus("Arquivo anexado com sucesso.");alert("Arquivo anexado com sucesso.");}catch(err){if(path)await deleteObject(storageRef(storage,path)).catch(()=>{});const message=err?.code==="storage/unauthorized"?"Você não tem permissão para anexar arquivos.":err?.code==="storage/unknown"||err?.code==="storage/object-not-found"?"Armazenamento de arquivos não configurado.":"Não foi possível anexar o arquivo.";setAttachmentStatus(message);alert(message);}finally{setSaving(false);e.target.value="";}};
- const delAttachment=async a=>{if(!confirm("Excluir este anexo?"))return;try{if(firebaseEnabled&&a.storagePath)await deleteObject(storageRef(storage,a.storagePath)).catch(error=>{if(error?.code!=="storage/object-not-found")throw error});await remove("records",a.id);setLocalAttachments(current=>current.filter(item=>item.id!==a.id));setAttachmentStatus("Arquivo excluído com sucesso.");}catch(e){setAttachmentStatus(e?.code==="storage/unauthorized"?"Você não tem permissão para excluir este arquivo.":"Não foi possível excluir o anexo.")}};
+
+ useEffect(()=>{
+  let active=true;
+  const loadSigned=async()=>{
+    for(const a of attachments){
+      if(a.storagePath&&!signedUrls[a.storagePath]){
+        try{
+          const url=await getSignedAttachmentUrl(a.storagePath,3600);
+          if(active&&url){setSignedUrls(prev=>({...prev,[a.storagePath]:url}));}
+        }catch(e){}
+      }
+    }
+  };
+  if(attachments.length) loadSigned();
+  return ()=>{active=false;};
+ },[attachments]);
+
+ const onFileSelect=e=>{
+  const file=e.target.files?.[0];
+  if(!file)return;
+  const val=validateAttachmentFile(file);
+  if(!val.valid){
+    setAttachmentStatus(val.error);
+    alert(val.error);
+    e.target.value="";
+    return;
+  }
+  setSelectedFile(file);
+  if(file.type.startsWith("image/")){
+    const reader=new FileReader();
+    reader.onload=ev=>setSelectedPreview(ev.target.result);
+    reader.readAsDataURL(file);
+  }else{
+    setSelectedPreview(null);
+  }
+  const suggestedCat=suggestCategoryFromFileName(file.name);
+  const dot=file.name.lastIndexOf(".");
+  const base=dot>0?file.name.substring(0,dot):file.name;
+  setAttach(prev=>({
+    ...prev,
+    name:prev.name.trim()||base,
+    category:prev.category==="Outros"?suggestedCat:prev.category
+  }));
+  setAttachmentStatus(`Arquivo pronto: ${file.name} (${formatFileSize(file.size)})`);
+ };
+
+ const cancelSelectedFile=()=>{
+  setSelectedFile(null);
+  setSelectedPreview(null);
+  setUploadProgress(0);
+  setAttachmentStatus("");
+ };
+
+ const executeUpload=async()=>{
+  if(!selectedFile||!patient){alert("Selecione um arquivo para anexar.");return;}
+  if(!isSupabaseConfigured()){
+    const msg="Armazenamento Supabase não configurado. Verifique as variáveis VITE_SUPABASE_URL e VITE_SUPABASE_PUBLISHABLE_KEY no arquivo .env.";
+    setAttachmentStatus(msg);
+    alert(msg);
+    return;
+  }
+  setSaving(true);
+  setAttachmentStatus("Enviando arquivo para o Supabase Storage...");
+  setUploadProgress(15);
+  try{
+    const uploaded=await uploadAttachmentFile({
+      clinicId:userId,
+      patientId:patient.id,
+      file:selectedFile,
+      onProgress:p=>setUploadProgress(p)
+    });
+    const attachment={
+      kind:"attachment",
+      clinicId:userId,
+      uid,
+      isLocked:false,
+      patientId:patient.id,
+      patient:patient.name,
+      name:attach.name.trim()||selectedFile.name,
+      category:attach.category||suggestCategoryFromFileName(selectedFile.name),
+      description:attach.description.trim(),
+      fileName:selectedFile.name,
+      mimeType:selectedFile.type||"application/octet-stream",
+      size:selectedFile.size,
+      url:uploaded.url,
+      storagePath:uploaded.storagePath,
+      date:today()
+    };
+    const id=await write("records",attachment);
+    setLocalAttachments(current=>[...current,{...attachment,id}]);
+    if(uploaded.url){
+      setSignedUrls(prev=>({...prev,[uploaded.storagePath]:uploaded.url}));
+    }
+    setAttach({category:"Outros",name:"",description:""});
+    setSelectedFile(null);
+    setSelectedPreview(null);
+    setAttachmentStatus("Arquivo anexado com sucesso.");
+    alert("Arquivo anexado com sucesso.");
+  }catch(err){
+    const msg=err?.message||"Não foi possível anexar o arquivo.";
+    setAttachmentStatus(msg);
+    alert(msg);
+  }finally{
+    setSaving(false);
+    setUploadProgress(0);
+  }
+ };
+
+ const openViewer=async a=>{
+  let url=signedUrls[a.storagePath]||a.url;
+  if(!url||!url.startsWith("http")){
+    try{
+      setAttachmentStatus("Gerando link seguro de visualização...");
+      url=await getSignedAttachmentUrl(a.storagePath,3600);
+      if(url) setSignedUrls(prev=>({...prev,[a.storagePath]:url}));
+      setAttachmentStatus("");
+    }catch(e){
+      alert("Não foi possível gerar a URL de visualização.");
+      return;
+    }
+  }
+  if(a.mimeType?.startsWith("image/")||/\.(jpg|jpeg|png|webp|tif|tiff|bmp|svg)$/i.test(a.fileName||"")){
+    setPreviewModal({open:true,item:a,url,zoom:1,inverted:false});
+  }else if(a.mimeType==="application/pdf"||(a.fileName||"").toLowerCase().endsWith(".pdf")){
+    setPreviewModal({open:true,item:a,url,zoom:1,inverted:false});
+  }else{
+    window.open(url,"_blank","noopener,noreferrer");
+  }
+ };
+
+ const handleDownload=async a=>{
+  try{
+    setAttachmentStatus("Baixando arquivo...");
+    await downloadAttachmentFile(a.storagePath,a.fileName);
+    setAttachmentStatus("");
+  }catch(err){
+    const url=signedUrls[a.storagePath]||a.url;
+    if(url&&url.startsWith("http")){
+      window.open(url,"_blank");
+    }else{
+      alert("Não foi possível baixar o arquivo.");
+    }
+    setAttachmentStatus("");
+  }
+ };
+
+ const delAttachment=async a=>{
+  if(!confirm(`Excluir o anexo "${a.name||a.fileName}"?`))return;
+  try{
+    setSaving(true);
+    setAttachmentStatus("Excluindo arquivo...");
+    if(a.storagePath){
+      await deleteAttachmentFile(a.storagePath).catch(()=>{});
+    }
+    await remove("records",a.id);
+    setLocalAttachments(current=>current.filter(item=>item.id!==a.id));
+    setSignedUrls(prev=>{const c={...prev};delete c[a.storagePath];return c;});
+    setAttachmentStatus("Arquivo excluído com sucesso.");
+  }catch(e){
+    setAttachmentStatus("Não foi possível excluir o anexo.");
+    alert("Não foi possível excluir o anexo.");
+  }finally{
+    setSaving(false);
+  }
+ };
+
  const history=data.records.filter(r=>r.patientId===patient?.id&&r.kind!=="odontogram"&&r.kind!=="anamnesis"&&r.kind!=="attachment").sort((a,b)=>String(b.date||"").localeCompare(String(a.date||"")));
- const Tooth=({n})=>{const status=statuses.find(x=>x.key===(toothStates[n]||"healthy"))||statuses[0];return <button title={`Dente ${n} — ${status.label}`} className={`tooth ${status.className}`} onClick={()=>cycleTooth(n)}><span className="toothShape"><i>{status.symbol}</i></span><b>{n}</b></button>};
+ const Tooth = ({ n }) => {
+  const status = statuses.find(x => x.key === (toothStates[n] || "healthy")) || statuses[0];
+  return (
+    <button title={`Dente ${n} — ${status.label}`} className={`tooth ${status.className}`} onClick={() => cycleTooth(n)}>
+      <span className="toothShape"><i>{status.symbol}</i></span>
+      <b>{n}</b>
+    </button>
+  );
+};
+
+const InfantTooth = ({ n }) => {
+  const status = statuses.find(x => x.key === (infantToothStates[n] || "healthy")) || statuses[0];
+  return (
+    <button title={`Dente ${n} — ${status.label}`} className={`tooth ${status.className}`} onClick={() => cycleInfant(n)}>
+      <span className="toothShape"><i>{status.symbol}</i></span>
+      <b>{n}</b>
+    </button>
+  );
+};
  const initials=patient?.name?.split(" ").map(x=>x[0]).slice(0,2).join("")||"";
  return <div className="recordLayout">
    <section className="panel recordPatients"><div className="recordHeader"><div><h3>Pacientes</h3><small>{data.patients.length} prontuários</small></div></div>{data.patients.map(p=><button className={`patientCard ${patient?.id===p.id?"selected":""}`} key={p.id} onClick={()=>{setPatient(p);setTab("overview")}}><div className="avatar">{p.name.split(" ").map(x=>x[0]).slice(0,2).join("")}</div><div><b>{p.name}</b><small>{p.phone||"Sem telefone"}</small></div></button>)}</section>
@@ -315,11 +541,44 @@ function Records({data,write,update,remove,userId,uid,initialPatientId,can}){
      <div className="recordTabs"><button className={tab==="overview"?"active":""} onClick={()=>setTab("overview")}><UserRound size={15}/> Ficha</button><button className={tab==="anamnesis"?"active":""} onClick={()=>setTab("anamnesis")}><HeartPulse size={15}/> Anamnese</button><button className={tab==="attachments"?"active":""} onClick={()=>setTab("attachments")}><Paperclip size={15}/> Anexos <span className="tabCount">{attachments.length}</span></button><button className={tab==="odontogram"?"active":""} onClick={()=>setTab("odontogram")}>🦷 Odontograma</button><button className={tab==="evolution"?"active":""} onClick={()=>setTab("evolution")}>📋 Evoluções</button><button className={tab==="history"?"active":""} onClick={()=>setTab("history")}>🕘 Histórico</button></div>
      {tab==="overview"&&<div className="patientOverview"><div className="infoCards"><div><span>Telefone</span><b>{patient.phone||"Não informado"}</b></div><div><span>E-mail</span><b>{patient.email||"Não informado"}</b></div><div><span>Nascimento</span><b>{patient.birth?new Date(patient.birth+"T12:00:00").toLocaleDateString("pt-BR"):"Não informado"}</b></div><div><span>Status</span><b>Ativo</b></div></div><div className="sectionTitle"><div><h4>Resumo clínico</h4><small>Informações importantes para o atendimento</small></div><button className="secondary" onClick={()=>setTab("anamnesis")}><HeartPulse size={16}/> Abrir anamnese</button></div><div className="clinicalHighlights"><div><HeartPulse/><span>Alergias</span><b>{anam.allergies||"Não informado"}</b></div><div><ClipboardList/><span>Medicamentos</span><b>{anam.medications||"Não informado"}</b></div><div><FileCheck/><span>Condições relevantes</span><b>{anam.conditions||"Não informado"}</b></div><div><Paperclip/><span>Documentos</span><b>{attachments.length} anexos</b></div></div></div>}
     {tab==="anamnesis"&&<AnamnesisForm anam={anam} setAnam={setAnam} patient={patient} saving={saving} save={saveAnamnesis}/>} 
-    {tab==="attachments"&&<div className="attachmentsPanel"><div className="sectionTitle"><div><h4>Documentos e arquivos do paciente</h4><small>Radiografias, fotos, atestados, contratos, termos e outros anexos.</small></div></div><div className="uploadBox"><div className="uploadIcon"><Paperclip/></div><div><b>Adicionar um novo arquivo</b><small>Até 15 MB por arquivo. Imagens, PDF e documentos são aceitos.</small></div><div className="uploadFields"><Input label="Nome do arquivo" v={attach.name} set={v=>setAttach({...attach,name:v})}/><label>Categoria<select value={attach.category} onChange={e=>setAttach({...attach,category:e.target.value})}><option>Radiografia</option><option>Foto clínica</option><option>Atestado</option><option>Contrato</option><option>Termo de consentimento</option><option>Documento</option><option>Exame</option><option>Outros</option></select></label><Input label="Observação" v={attach.description} set={v=>setAttach({...attach,description:v})}/></div><label className="fileButton primary"><Plus size={17}/> {saving?"Enviando...":"Selecionar arquivo"}<input type="file" onChange={upload} accept="image/*,.pdf,.doc,.docx,.xls,.xlsx,.txt" hidden/></label>{attachmentStatus&&<small className="attachmentStatus">{attachmentStatus}</small>}</div><div className="attachmentList">{attachments.length?attachments.map(a=><div className="attachmentCard" key={a.id}><div className="attachmentIcon">{a.mimeType?.startsWith("image/")?<ImageIcon/>:<FileText/>}</div><div className="attachmentInfo"><b>{a.name}</b><small>{a.category} • {a.date||"Sem data"} • {a.fileName}</small>{a.description&&<p>{a.description}</p>}</div><div className="attachmentActions"><a className="iconBtn" href={a.url} target="_blank" rel="noreferrer" title="Visualizar"><Eye size={17}/></a><a className="iconBtn" href={a.url} download={a.fileName} title="Baixar"><Download size={17}/></a><button className="iconBtn dangerBtn" onClick={()=>delAttachment(a)} title="Excluir"><Trash2 size={17}/></button></div></div>):<Empty text="Nenhum arquivo anexado a este paciente."/>}</div></div>}
-     {tab==="odontogram"&&<div className="odontogramWrap"><div className="odontoToolbar"><div><b>Odontograma permanente</b><small>Numeração FDI • clique em um dente para alterar o estado</small></div><button className="primary" onClick={saveOdontogram} disabled={saving}><CheckCircle size={17}/> {saving?"Salvando...":"Salvar odontograma"}</button></div><div className="odontoLegend">{statuses.map(x=><span key={x.key}><i className={`legendDot ${x.className}`}></i>{x.label}</span>)}</div><div className="jaw"><div className="jawLabel">MAXILA</div><div className="teethRow">{permanentUpper.map(n=><Tooth key={n} n={n}/>)}</div><div className="midline"></div><div className="teethRow">{permanentLower.map(n=><Tooth key={n} n={n}/>)}</div><div className="jawLabel">MANDÍBULA</div></div><div className="odontoSummary"><b>Resumo:</b> {Object.values(toothStates).filter(x=>x==="caries").length} cáries • {Object.values(toothStates).filter(x=>x==="restored").length} restaurados • {Object.values(toothStates).filter(x=>x==="planned").length} planejados • {Object.values(toothStates).filter(x=>x==="missing").length} ausentes</div></div>}
+    {tab==="attachments"&&<div className="attachmentsPanel"><div className="sectionTitle"><div><h4>Documentos e arquivos do paciente</h4><small>Radiografias, fotos, atestados, contratos, termos e outros anexos.</small></div></div><div className="uploadBox"><div className="uploadIcon">{selectedPreview?<img src={selectedPreview} alt="Prévia" style={{width:"100%",height:"100%",objectFit:"cover",borderRadius:"11px"}}/>:<Paperclip/>}</div><div><b>{selectedFile?`Arquivo: ${selectedFile.name}`:"Adicionar um novo arquivo"}</b><small>{selectedFile?`${formatFileSize(selectedFile.size)} • Pronto para envio`:"Até 15 MB por arquivo. Imagens, PDF e documentos são aceitos."}</small></div><div className="uploadFields"><Input label="Nome do arquivo" v={attach.name} set={v=>setAttach({...attach,name:v})}/><label>Categoria<select value={attach.category} onChange={e=>setAttach({...attach,category:e.target.value})}>{ATTACHMENT_CATEGORIES.map(c=><option key={c} value={c}>{c}</option>)}</select></label><Input label="Observação" v={attach.description} set={v=>setAttach({...attach,description:v})}/></div>{!selectedFile?<label className="fileButton primary"><Plus size={17}/> Selecionar arquivo<input type="file" onChange={onFileSelect} accept="image/*,.pdf,.doc,.docx,.xls,.xlsx,.txt" hidden/></label>:<div style={{display:"flex",gap:"8px",alignItems:"center"}}><button type="button" className="secondary" onClick={cancelSelectedFile} disabled={saving} title="Cancelar seleção"><X size={15}/></button><button type="button" className="primary fileButton" onClick={executeUpload} disabled={saving}><Plus size={17}/> {saving?(uploadProgress?`Enviando (${uploadProgress}%)...`:"Enviando..."):"Enviar arquivo"}</button></div>}{attachmentStatus&&<small className="attachmentStatus">{attachmentStatus}</small>}{saving&&uploadProgress>0&&<div style={{gridColumn:"1/-1",height:"4px",background:"#edf0f5",borderRadius:"99px",overflow:"hidden",marginTop:"2px"}}><div style={{width:`${uploadProgress}%`,height:"100%",background:"#2563eb",transition:"width 0.2s ease"}}/></div>}</div><div className="attachmentList">{attachments.length?attachments.map(a=>{const url=signedUrls[a.storagePath]||a.url;const isImg=a.mimeType?.startsWith("image/")||/\.(jpg|jpeg|png|webp|tif|tiff|bmp|svg)$/i.test(a.fileName||a.name||"");return <div className="attachmentCard" key={a.id}><div className="attachmentIcon" onClick={()=>isImg&&openViewer(a)} style={{cursor:isImg?"pointer":"default"}}>{isImg&&url?<img src={url} alt={a.name} style={{width:"100%",height:"100%",objectFit:"cover",borderRadius:"10px"}}/>:isImg?<ImageIcon/>:<FileText/>}</div><div className="attachmentInfo"><b>{a.name}</b><small>{a.category} • {a.date||"Sem data"} • {a.fileName} {a.size?`• ${formatFileSize(a.size)}`:""}</small>{a.description&&<p>{a.description}</p>}</div><div className="attachmentActions"><button type="button" className="iconBtn" onClick={()=>openViewer(a)} title="Visualizar"><Eye size={17}/></button><button type="button" className="iconBtn" onClick={()=>handleDownload(a)} title="Baixar"><Download size={17}/></button><button type="button" className="iconBtn dangerBtn" onClick={()=>delAttachment(a)} title="Excluir"><Trash2 size={17}/></button></div></div>}):<Empty text="Nenhum arquivo anexado a este paciente."/>}</div></div>}
+     {tab==="odontogram" && (
+  <div className="odontogramWrap">
+    <div className="odontoToolbar">
+      <div>
+        <b>Odontograma</b>
+        <small>Dentição mista • 32 permanentes + 20 decíduos</small>
+      </div>
+      <button className="primary" onClick={saveOdontogram} disabled={saving}>
+        <CheckCircle size={17}/> {saving?"Salvando...":"Salvar odontograma"}
+      </button>
+    </div>
+    <div className="odontoLegend">
+      {statuses.map(x => (
+        <span key={x.key}><i className={`legendDot ${x.className}`}></i>{x.label}</span>
+      ))}
+    </div>
+    <div className="jaw">
+      <div className="jawLabel">MAXILA</div>
+      <div className="groupLabel">PERMANENTES</div>
+      <div className="teethRow">{permanentUpper.map(n => <Tooth key={n} n={n} />)}</div>
+      <div className="groupLabel">DECÍDUOS</div>
+      <div className="teethRow infantRow">{[...infantUpperRight, ...infantUpperLeft].map(n => <InfantTooth key={n} n={n} />)}</div>
+      <div className="midline"></div>
+      <div className="jawLabel">MANDÍBULA</div>
+      <div className="groupLabel">PERMANENTES</div>
+      <div className="teethRow">{permanentLower.map(n => <Tooth key={n} n={n} />)}</div>
+      <div className="groupLabel">DECÍDUOS</div>
+      <div className="teethRow infantRow">{[...infantLowerLeft, ...infantLowerRight].map(n => <InfantTooth key={n} n={n} />)}</div>
+    </div>
+    <div className="odontoSummary">
+      <b>Resumo:</b> {Object.values(toothStates).filter(x=>x==="caries").length} cáries • {Object.values(toothStates).filter(x=>x==="restored").length} restaurados • {Object.values(toothStates).filter(x=>x==="planned").length} planejados • {Object.values(toothStates).filter(x=>x==="missing").length} ausentes
+    </div>
+  </div>
+)}
      {tab==="evolution"&&<div className="evolutionPanel"><div className="clinicalGrid"><label>Queixa principal<textarea value={complaint} onChange={e=>setComplaint(e.target.value)} placeholder="O que trouxe o paciente à consulta?"/></label><label>Diagnóstico / hipótese<textarea value={diagnosis} onChange={e=>setDiagnosis(e.target.value)} placeholder="Diagnóstico ou hipótese clínica..."/></label></div><label>Evolução clínica<textarea value={note} onChange={e=>setNote(e.target.value)} placeholder="Descreva a evolução, procedimentos realizados, orientações e observações..."/></label><button className="primary" onClick={saveEvolution}><CheckCircle size={17}/> Salvar evolução</button></div>}
      {tab==="history"&&<div className="recordList">{history.length?history.map(r=><div className="recordNote" key={r.id}><FileText/><div><b>{r.date||"Sem data"}</b>{r.complaint&&<p><strong>Queixa:</strong> {r.complaint}</p>}{r.diagnosis&&<p><strong>Diagnóstico:</strong> {r.diagnosis}</p>}{r.note&&<p>{r.note}</p>}</div></div>):<Empty text="Nenhuma evolução registrada para este paciente."/>}</div>}
-   </>}{editPatient&&<Modal title="Editar dados do paciente" close={()=>setEditPatient(false)}><div className="formGrid clinicalGrid"><Input label="Nome completo" v={patientForm.name} set={v=>setPatientForm({...patientForm,name:v})}/><Input label="Data de nascimento" type="date" v={patientForm.birth} set={v=>setPatientForm({...patientForm,birth:v})}/><Input label="Telefone / WhatsApp" v={patientForm.phone} set={v=>setPatientForm({...patientForm,phone:v})}/><Input label="E-mail" type="email" v={patientForm.email} set={v=>setPatientForm({...patientForm,email:v})}/><Input label="CPF" v={patientForm.cpf} set={v=>setPatientForm({...patientForm,cpf:v})}/><Input label="RG" v={patientForm.rg} set={v=>setPatientForm({...patientForm,rg:v})}/><Input label="Responsável" v={patientForm.responsible} set={v=>setPatientForm({...patientForm,responsible:v})}/><Input label="Profissão" v={patientForm.profession} set={v=>setPatientForm({...patientForm,profession:v})}/><label>Endereço<textarea value={patientForm.address||""} onChange={e=>setPatientForm({...patientForm,address:e.target.value})}/></label><label>Observações<textarea value={patientForm.notes||""} onChange={e=>setPatientForm({...patientForm,notes:e.target.value})}/></label></div><button className="primary full" onClick={savePatient}>Salvar dados do paciente</button></Modal>}</section></div>;
+   </>}{editPatient&&<Modal title="Editar dados do paciente" close={()=>setEditPatient(false)}><div className="formGrid clinicalGrid"><Input label="Nome completo" v={patientForm.name} set={v=>setPatientForm({...patientForm,name:v})}/><Input label="Data de nascimento" type="date" v={patientForm.birth} set={v=>setPatientForm({...patientForm,birth:v})}/><Input label="Telefone / WhatsApp" v={patientForm.phone} set={v=>setPatientForm({...patientForm,phone:v})}/><Input label="E-mail" type="email" v={patientForm.email} set={v=>setPatientForm({...patientForm,email:v})}/><Input label="CPF" v={patientForm.cpf} set={v=>setPatientForm({...patientForm,cpf:v})}/><Input label="RG" v={patientForm.rg} set={v=>setPatientForm({...patientForm,rg:v})}/><Input label="Responsável" v={patientForm.responsible} set={v=>setPatientForm({...patientForm,responsible:v})}/><Input label="Profissão" v={patientForm.profession} set={v=>setPatientForm({...patientForm,profession:v})}/><label>Endereço<textarea value={patientForm.address||""} onChange={e=>setPatientForm({...patientForm,address:e.target.value})}/></label><label>Observações<textarea value={patientForm.notes||""} onChange={e=>setPatientForm({...patientForm,notes:e.target.value})}/></label></div><button className="primary full" onClick={savePatient}>Salvar dados do paciente</button></Modal>}{previewModal.open&&<Modal title={previewModal.item?.name||"Visualizar anexo"} className="largeModal" close={()=>setPreviewModal({open:false,item:null,url:"",zoom:1,inverted:false})}>{previewModal.item?.mimeType?.startsWith("image/")||/\.(jpg|jpeg|png|webp|tif|tiff|bmp|svg)$/i.test(previewModal.item?.fileName||"")?<div><div className="rxToolbar"><button type="button" className="secondary" onClick={()=>setPreviewModal(prev=>({...prev,zoom:Math.min(prev.zoom+0.25,3)}))} title="Aumentar zoom"><ZoomIn size={15}/> Zoom +</button><button type="button" className="secondary" onClick={()=>setPreviewModal(prev=>({...prev,zoom:Math.max(prev.zoom-0.25,0.5)}))} title="Diminuir zoom"><ZoomOut size={15}/> Zoom -</button><button type="button" className={`secondary ${previewModal.inverted?"active":""}`} onClick={()=>setPreviewModal(prev=>({...prev,inverted:!prev.inverted}))} title="Inverter contraste radiográfico">RX Negativo</button><button type="button" className="secondary" onClick={()=>setPreviewModal(prev=>({...prev,zoom:1,inverted:false}))} title="Restaurar visualização">Reset</button><a className="secondary" href={previewModal.url} target="_blank" rel="noreferrer" title="Abrir em nova aba"><ExternalLink size={15}/> Nova aba</a></div><div className="rxViewport"><img src={previewModal.url} alt={previewModal.item?.name} style={{transform:`scale(${previewModal.zoom})`,filter:previewModal.inverted?"invert(1) contrast(1.15)":"none"}}/></div></div>:previewModal.item?.mimeType==="application/pdf"||(previewModal.item?.fileName||"").toLowerCase().endsWith(".pdf")?<div style={{height:"65vh"}}><iframe src={previewModal.url} title={previewModal.item?.name} style={{width:"100%",height:"100%",border:0,borderRadius:"8px"}}/></div>:<div style={{padding:"20px",textAlign:"center"}}><FileText size={48} style={{color:"#2563eb",marginBottom:"12px"}}/><h4>{previewModal.item?.name}</h4><p style={{color:"#667085"}}>{previewModal.item?.fileName} • {formatFileSize(previewModal.item?.size)}</p><a className="primary" href={previewModal.url} target="_blank" rel="noreferrer" style={{marginTop:"12px"}}><ExternalLink size={16}/> Abrir em nova aba</a></div>}<div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginTop:"16px",paddingTop:"14px",borderTop:"1px solid #edf0f5"}}><small style={{color:"#8992a3"}}>{previewModal.item?.category} • {previewModal.item?.date||"Sem data"} {previewModal.item?.size?`• ${formatFileSize(previewModal.item?.size)}`:""}</small><button className="primary" onClick={()=>handleDownload(previewModal.item)}><Download size={16}/> Baixar arquivo</button></div></Modal>}</section></div>;
 }
 function Finance({data,update,write,can}){const [open,setOpen]=useState(false),[form,setForm]=useState({patient:"",description:"",value:"",status:"Pendente",date:today()});useEffect(()=>{const h=()=>{if(can("Financeiro","finances.create"))setOpen(true)};window.addEventListener("newItem",h);return()=>window.removeEventListener("newItem",h)},[can]);const add=async()=>{if(!form.description)return;await write("finances",{...form,value:Number(form.value||0)});setOpen(false)};return <section className="panel"><div className="toolbar"><div><h3>Financeiro</h3><small>Contas, recebimentos e lançamentos</small></div>{can("Financeiro","finances.create")&&<button className="primary" onClick={()=>setOpen(true)}><Plus size={18}/> Lançamento</button>}</div><div className="table"><div className="tr th"><span>Paciente</span><span>Descrição</span><span>Valor</span><span>Status</span><span></span></div>{data.finances.map(f=><div className="tr" key={f.id}><span><b>{f.patient||"—"}</b></span><span>{f.description}</span><span><b>{money(f.value)}</b></span><span><span className={"badge "+String(f.status||"").toLowerCase()}>{f.status}</span></span><span>{can("Financeiro","finances.payments")&&<button className="iconBtn" onClick={()=>update("finances",f.id,{status:"Pago"})}><CheckCircle size={16}/></button>}</span></div>)}</div>{open&&<Modal title="Novo lançamento" close={()=>setOpen(false)}><Input label="Paciente" v={form.patient} set={v=>setForm({...form,patient:v})}/><Input label="Descrição" v={form.description} set={v=>setForm({...form,description:v})}/><Input label="Valor" type="number" v={form.value} set={v=>setForm({...form,value:v})}/><button className="primary full" onClick={add}>Salvar lançamento</button></Modal>}</section>}
 function Stock({data,update,write,remove}){
@@ -402,8 +661,8 @@ function ProfessionalManager({data,write,clinicId,role}){
  return <section className="panel"><div className="toolbar"><div><h3>Profissionais</h3><small>Selecione um profissional para abrir a ficha completa.</small></div>{canManage&&<button className="primary" onClick={newProfile}><Plus size={18}/> Novo profissional</button>}</div><div className="professionalList">{data.professionals.map(profile=><button className="professional" key={profile.id} onClick={()=>openProfile(profile)}><div className="avatar">{profile.name?.slice(0,2).toUpperCase()}</div><div><b>{profile.name}</b><small>{profile.specialty||profile.position||"Profissional"}</small></div><span className={`badge ${String(profile.status||"Ativo").toLowerCase()}`}>{profile.status||"Ativo"}</span><Pencil size={16}/></button>)}{!data.professionals.length&&<Empty text="Nenhum profissional cadastrado."/>}</div>{open&&<Modal title={selected?"Ficha do profissional":"Novo profissional"} close={()=>{setOpen(false);setSelected(null)}}><div className="formGrid"><Input label="Nome completo" v={form.name} set={v=>setForm({...form,name:v})}/><Input label="E-mail" type="email" v={form.email||form.loginEmail} set={v=>setForm({...form,email:v,loginEmail:v})}/><Input label="CPF" v={form.cpf} set={v=>setForm({...form,cpf:v})}/><Input label="RG" v={form.rg} set={v=>setForm({...form,rg:v})}/><Input label="Data de nascimento" type="date" v={form.birth} set={v=>setForm({...form,birth:v})}/><Input label="Telefone" v={form.phone} set={v=>setForm({...form,phone:v})}/><Input label="WhatsApp" v={form.whatsapp} set={v=>setForm({...form,whatsapp:v})}/><Input label="Endereço" v={form.address} set={v=>setForm({...form,address:v})}/><Input label="Profissão" v={form.profession} set={v=>setForm({...form,profession:v})}/><Input label="Cargo / função" v={form.position} set={v=>setForm({...form,position:v})}/><Input label="Especialidade" v={form.specialty} set={v=>setForm({...form,specialty:v})}/><Input label="CRO" v={form.cro} set={v=>setForm({...form,cro:v})}/><Input label="UF do CRO" v={form.croState} set={v=>setForm({...form,croState:v})}/><Input label="Data de contratação" type="date" v={form.hireDate} set={v=>setForm({...form,hireDate:v})}/><label>Status<select value={form.status} onChange={e=>setForm({...form,status:e.target.value,accessStatus:e.target.value})}><option>Ativo</option><option>Inativo</option><option>Bloqueado</option></select></label><label>Observações<textarea value={form.notes||""} onChange={e=>setForm({...form,notes:e.target.value})}/></label></div><h4>ACESSO AO SISTEMA</h4><div className="formGrid"><Input label="E-mail de login" type="email" v={form.loginEmail||form.email} set={v=>setForm({...form,loginEmail:v,email:v})}/>{!selected&&<><Input label="Senha inicial" type="password" v={form.initialPassword||""} set={v=>setForm({...form,initialPassword:v})}/><Input label="Confirmar senha" type="password" v={form.confirmPassword||""} set={v=>setForm({...form,confirmPassword:v})}/></>}<label>Status do acesso<select value={form.accessStatus||form.status||"Ativo"} onChange={e=>setForm({...form,accessStatus:e.target.value,status:e.target.value})}><option>Ativo</option><option>Bloqueado</option></select></label><label>Perfil / função<input value={form.role||"Outro"} onChange={e=>setForm({...form,role:e.target.value})}/></label></div><h4>Permissões de acesso</h4><div className="permissionPicker">{permissions.map(key=><label key={key}><input type="checkbox" checked={(form.permissions||[]).includes(key)} onChange={e=>setForm({...form,permissions:e.target.checked?[...(form.permissions||[]),key]:(form.permissions||[]).filter(item=>item!==key)})}/>{labels[key]}</label>)}</div><button className="primary full" disabled={saving} onClick={saveProfile}>{saving?"Salvando...":"Salvar profissional"}</button></Modal>}</section>;
 }
 function Reports({data}){return <><div className="cards"><Card icon={Users} title="Total pacientes" value={data.patients.length} note="Base cadastrada"/><Card icon={CalendarDays} title="Consultas" value={data.appointments.length} note="Agenda"/><Card icon={DollarSign} title="Movimentado" value={money(data.finances.reduce((a,b)=>a+Number(b.value||0),0))} note="Lançamentos"/><Card icon={Package} title="Itens estoque" value={data.stock.length} note="Cadastrados"/></div><section className="panel"><h3>Indicadores</h3><div className="quick"><span>Pagamentos recebidos: <b>{money(data.finances.filter(x=>x.status==="Pago").reduce((a,b)=>a+Number(b.value||0),0))}</b></span><span>Contas pendentes: <b>{money(data.finances.filter(x=>x.status!=="Pago").reduce((a,b)=>a+Number(b.value||0),0))}</b></span><span>Estoque abaixo do mínimo: <b>{data.stock.filter(x=>Number(x.quantity)<Number(x.min)).length}</b></span></div></section></>}
-function SettingsPage({clinic,save}){const [form,setForm]=useState({name:clinic?.name||"",phone:clinic?.phone||"",address:clinic?.address||""});useEffect(()=>setForm({name:clinic?.name||"",phone:clinic?.phone||"",address:clinic?.address||""}),[clinic]);return <section className="panel settings"><h3>Configurações da clínica</h3><label>Nome da clínica<input value={form.name} onChange={e=>setForm({...form,name:e.target.value})}/></label><label>Telefone<input value={form.phone} onChange={e=>setForm({...form,phone:e.target.value})}/></label><label>Endereço<input value={form.address} onChange={e=>setForm({...form,address:e.target.value})}/></label><button className="primary" onClick={()=>save(form)}>Salvar alterações</button></section>}
-function Modal({title,close,children}){return <div className="overlay"><div className="modal"><div className="modalHead"><h3>{title}</h3><button onClick={close}>×</button></div>{children}</div></div>}
+function SettingsPage({clinic,save}){const [form,setForm]=useState({name:clinic?.name||"",phone:clinic?.phone||"",address:clinic?.address||""});useEffect(()=>setForm({name:clinic?.name||"",phone:clinic?.phone||"",address:clinic?.address||""}),[clinic]);return <section className="panel settings"><h3>Configurações da clínica</h3><label>Nome da clínica<input value={form.name} onChange={e=>setForm({...form,name:e.target.value})}/></label><label>Telefone<input value={form.phone} onChange={e=>setForm({...form,phone:e.target.value})}/></label><label>Endereço<input value={form.address} onChange={e=>setForm({...form,address:e.target.value})}/></label><button className="primary" onClick={() => save(form)}>Salvar alterações</button>{APK_DOWNLOAD_URL ? (<a href={APK_DOWNLOAD_URL} className="secondary" style={{marginLeft:"0.5rem"}} download><Download size={18}/> Baixar APK Android</a>) : (<button className="secondary" disabled title="URL do APK não configurada" style={{marginLeft:"0.5rem"}}>Baixar APK Android</button>)}</section>}
+function Modal({title,close,children,className=""}){return <div className="overlay"><div className={`modal ${className}`}><div className="modalHead"><h3>{title}</h3><button onClick={close}>×</button></div>{children}</div></div>}
 function Input({label,v,set,type="text"}){return <label>{label}<input type={type} value={v} onChange={e=>set(e.target.value)}/>{label==="UF do CRO"&&<><span>Cor na agenda</span><input className="colorPicker" type="color" defaultValue={window.__professionalCalendarColor||"#2563eb"} onChange={e=>window.dispatchEvent(new CustomEvent("professionalColorChange",{detail:e.target.value}))}/></>}</label>}
 function Empty({text}){return <div className="empty">{text}</div>}
 export default App;

@@ -1,5 +1,6 @@
 const crypto = require("node:crypto");
 const { onDocumentCreated } = require("firebase-functions/v2/firestore");
+const { onUserCreated } = require("firebase-functions/v2/auth");
 const { onRequest } = require("firebase-functions/v2/https");
 const { defineSecret } = require("firebase-functions/params");
 const admin = require("firebase-admin");
@@ -78,4 +79,51 @@ exports.whatsappWebhook = onRequest({ secrets: [WEBHOOK_VERIFY_TOKEN] }, async (
   const appointmentRef = appointmentDoc.ref;
   await appointmentRef.update({ status: accepted === "confirmed" ? "Confirmada" : "Cancelada", confirmationStatus: accepted, confirmationResponse: accepted, confirmationSource: "whatsapp", confirmationRespondedAt: admin.firestore.FieldValue.serverTimestamp(), whatsappStatus: "read" });
   return res.sendStatus(200);
+});
+
+// ---------- New Auth Claim Functions ----------
+
+// Secret token to protect admin HTTP endpoint
+const CLAIMS_ADMIN_TOKEN = defineSecret('CLAIMS_ADMIN_TOKEN');
+
+// Set custom claim for newly created users
+exports.addAuthenticatedClaim = onUserCreated(async (event) => {
+  const { uid } = event;
+  try {
+    await admin.auth().setCustomUserClaims(uid, { role: 'authenticated' });
+    console.log(`Custom claim set for user ${uid}`);
+  } catch (error) {
+    console.error('Error setting custom claim:', error);
+  }
+});
+
+// HTTP endpoint to assign the claim to all existing users (protected by secret)
+exports.assignClaimsToExistingUsers = onRequest({ secrets: [CLAIMS_ADMIN_TOKEN] }, async (req, res) => {
+  // Simple token check via query param
+  const token = req.query.token;
+  if (token !== CLAIMS_ADMIN_TOKEN.value()) {
+    console.warn('Unauthorized attempt to assign claims');
+    return res.sendStatus(403);
+  }
+  let nextPageToken = undefined;
+  const usersUpdated = [];
+  try {
+    do {
+      const listResult = await admin.auth().listUsers(1000, nextPageToken);
+      const promises = listResult.users.map(async (userRecord) => {
+        const claims = userRecord.customClaims || {};
+        if (claims.role !== 'authenticated') {
+          await admin.auth().setCustomUserClaims(userRecord.uid, { ...claims, role: 'authenticated' });
+          usersUpdated.push(userRecord.uid);
+        }
+      });
+      await Promise.all(promises);
+      nextPageToken = listResult.pageToken;
+    } while (nextPageToken);
+    console.log(`Updated ${usersUpdated.length} users with authenticated role.`);
+    return res.json({ updated: usersUpdated.length });
+  } catch (err) {
+    console.error('Error assigning claims to existing users:', err);
+    return res.status(500).send('Internal Server Error');
+  }
 });
