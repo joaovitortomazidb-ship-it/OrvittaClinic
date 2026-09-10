@@ -23,6 +23,7 @@ import "./styles.css";
 // APK download configuration
 const APK_DOWNLOAD_URL = "https://github.com/joaovitortomazidb-ship-it/OrvittaClinic/releases/download/v1.0.1/app-debug.apk";
 const APK_VERSION = "1.0.1";
+const ORVITTA_VISION_ENDPOINT = import.meta.env.VITE_ORVITTA_VISION_ENDPOINT || "";
 
 function AuthScreen(){
   const [mode,setMode]=useState("login"),[clinic,setClinic]=useState(""),[name,setName]=useState(""),[phone,setPhone]=useState(""),[email,setEmail]=useState(""),[password,setPassword]=useState(""),[confirmPassword,setConfirmPassword]=useState(""),[error,setError]=useState(""),[busy,setBusy]=useState(false),[showPassword,setShowPassword]=useState(false),[showConfirmPassword,setShowConfirmPassword]=useState(false);
@@ -64,7 +65,7 @@ const clinicalAlertOptions=[
  {key:"pregnancy",label:"Gestante"},{key:"kidneyDisease",label:"Doença renal"},{key:"liverDisease",label:"Doença hepática"},
  {key:"respiratoryDisease",label:"Doença respiratória"},{key:"bruxism",label:"Bruxismo"},{key:"specialAttention",label:"Necessidade de atenção especial"},{key:"other",label:"Outro"}
 ];
-const anamnesisDefaults={bloodType:"",allergies:"",medications:"",conditions:"",surgeries:"",pregnancy:"",smoking:"",alcohol:"",bruxism:"",hygiene:"",lastDentist:"",previousTreatments:"",familyHistory:"",notes:"",anamnesisType:"",alerts:[],alertDetails:{},child:{},young:{},adult:{},elderly:{}};
+const anamnesisDefaults={bloodType:"",allergies:"",medications:"",conditions:"",surgeries:"",pregnancy:"",smoking:"",alcohol:"",bruxism:"",hygiene:"",lastDentist:"",previousTreatments:"",familyHistory:"",notes:"",anamnesisType:"",chiefComplaint:"",weight:"",height:"",plannedProcedure:"",procedureRegion:"",alerts:[],alertDetails:{},child:{},young:{},adult:{},elderly:{}};
 const DEFAULT_PREFERENCES={accent:"#2563eb",density:"comfortable",animations:true,startPage:"Agenda",agendaView:"day"};
 const ACCENT_PRESETS=[{name:"Ocean",value:"#2563eb"},{name:"Violeta",value:"#7c3aed"},{name:"Turquesa",value:"#0f766e"},{name:"Coral",value:"#ea580c"},{name:"Rosa",value:"#db2777"}];
 
@@ -212,8 +213,8 @@ function App(){
  if(firebaseEnabled&&!clinicId&&error) return <div className="loading"><div className="error">{error}</div><button className="primary" onClick={logout}>Sair</button></div>;
  if(firebaseEnabled&&!clinicId) return <div className="loading"><RefreshCw className="spin"/> Preparando acesso...</div>;
 
- const allNav=[["Dashboard",LayoutDashboard],["Pacientes",Users],["Agenda",CalendarDays],["Prontuários",FileText],["Financeiro",DollarSign],["Estoque",Package],["Profissionais",UserCog],["Relatórios",BarChart3],["Configurações",Settings]];
- const allowedPages=role==="owner"||role==="admin"?allNav.map(item=>item[0]):member?.permissions?.length?allNav.filter(([name])=>name==="Agenda"||name==="Dashboard"||member.permissions.includes(name)||member.permissions.some(item=>({Pacientes:"patients",Agenda:"appointments",Financeiro:"finances",Estoque:"stock",Profissionais:"professionals",Prontuários:"records",Relatórios:"reports",Configurações:"settings"}[name]||"")+"."===item.slice(0,item.indexOf(".")+1))).filter(([name])=>name!=="Configurações").map(item=>item[0]):["Agenda","Dashboard"];
+ const allNav=[["Dashboard",LayoutDashboard],["Pacientes",Users],["Agenda",CalendarDays],["Orvitta AI",Sparkles],["Prontuários",FileText],["Financeiro",DollarSign],["Estoque",Package],["Profissionais",UserCog],["Relatórios",BarChart3],["Configurações",Settings]];
+ const allowedPages=role==="owner"||role==="admin"?allNav.map(item=>item[0]):member?.permissions?.length?allNav.filter(([name])=>name==="Agenda"||name==="Dashboard"||member.permissions.includes(name)||member.permissions.some(item=>({Pacientes:"patients",Agenda:"appointments","Orvitta AI":"records",Prontuários:"records",Financeiro:"finances",Estoque:"stock",Profissionais:"professionals",Relatórios:"reports",Configurações:"settings"}[name]||"")+"."===item.slice(0,item.indexOf(".")+1))).filter(([name])=>name!=="Configurações").map(item=>item[0]):["Agenda","Dashboard"];
  const nav=allNav.filter(([name])=>allowedPages.includes(name));
  const can=(module,action)=>role==="owner"||role==="admin"||member?.permissions?.includes(module)||member?.permissions?.includes(action);
  const write=async(collectionName,payload)=>{
@@ -246,6 +247,7 @@ function App(){
   Dashboard:<Dashboard data={data}/>,
   Pacientes:<Patients data={data} search={search} write={write} remove={remove} can={can} onOpenRecord={id=>{setSelectedPatientId(id);setPage("Prontuários")}}/>,
   Agenda:<Agenda data={data} preferences={preferences} write={write} update={update} remove={remove} can={can} onOpenRecord={id=>{setSelectedPatientId(id);setPage("Prontuários")}}/>,
+  "Orvitta AI":<OrvittaAIPage data={data} can={can} initialPatientId={selectedPatientId} onOpenRecord={id=>{setSelectedPatientId(id);setPage("Prontuários")}}/>,
   Prontuários:<Records data={data} write={write} update={update} remove={remove} userId={clinicId} uid={user.uid} initialPatientId={selectedPatientId} can={can}/>,
   Financeiro:<Finance data={data} update={update} write={write} can={can}/>,
   Estoque:<Stock data={data} update={update} write={write} remove={remove} can={can}/>,
@@ -407,30 +409,243 @@ function AlertIndicator({alerts,important=false}){return <span className={`clini
 function AlertSummary({alerts}){return <div className="clinicalAlertSummary"><b><AlertTriangle size={15}/> Alertas clínicos</b><span>{alertLabels(alerts).join(" • ")}</span></div>}
 function AnamnesisField({label,value,onChange,area=false}){return <label>{label}{area?<textarea value={value||""} onChange={e=>onChange(e.target.value)}/>:<input value={value||""} onChange={e=>onChange(e.target.value)}/>}</label>}
 function AnamnesisSection({title,children}){return <section className="anamnesisSection"><h4>{title}</h4><div className="formGrid clinicalGrid">{children}</div></section>}
-function AnamnesisForm({anam,setAnam,patient,saving,save}){
+
+function buildOrvittaClinicalAnalysis(anam,patient,type,age,toothDetails={}){
+ const alerts=Array.isArray(anam.alerts)?anam.alerts:[];
+ const medications=String(anam.medications||'').toLowerCase();
+ const allergies=String(anam.allergies||'').toLowerCase();
+ const conditions=String(anam.conditions||'').toLowerCase();
+ const complaint=String(anam.chiefComplaint||'').trim();
+ const weight=Number(anam.weight||0); const height=Number(anam.height||0);
+ const bmi=weight>0&&height>0?weight/((height/100)**2):null;
+ const relevantTeeth=Object.entries(toothDetails||{}).filter(([,v])=>String(v?.findings||v?.diagnosis||v?.treatment||'').trim());
+ const critical=[]; const caution=[]; const questions=[];
+ const add=(arr,title,text,tag)=>arr.push({title,text,tag});
+ if(alerts.includes('medicationAllergy')||allergies){add(critical,'Alergias registradas','Revisar exatamente o agente, reação e alternativas antes de prescrever ou administrar qualquer medicamento.','Alergia');}
+ if(alerts.includes('anestheticAllergy')){add(critical,'Alergia a anestésico','Confirmar qual anestésico causou a reação, qual foi a reação e a avaliação clínica antes de planejar anestesia local.','Anestésico');questions.push('Qual anestésico causou a reação e qual foi a reação apresentada?');}
+ if(alerts.includes('anticoagulant')){add(critical,'Uso de anticoagulante','Revisar medicamento, dose, indicação e risco hemorrágico do procedimento. Não interromper medicação por conta própria.','Sangramento');questions.push('Qual anticoagulante é utilizado e qual a dose?');}
+ if(alerts.includes('antiplatelet')){add(caution,'Uso de antiagregante','Revisar medicamento e contexto cardiovascular antes de procedimentos com potencial de sangramento.','Sangramento');questions.push('Qual antiagregante e qual a dose?');}
+ if(alerts.includes('coagulation')){add(critical,'Alteração de coagulação','Confirmar histórico de sangramento e dados laboratoriais relevantes quando indicados para o caso.','Coagulação');questions.push('Já houve sangramento prolongado em procedimentos anteriores?');}
+ if(alerts.includes('heartDisease')||/cardiac|cardíac|infarto|angina|arritmia/.test(conditions)){add(caution,'Condição cardiovascular','Revisar diagnóstico, controle atual e medicações antes de definir o plano do atendimento.','Cardiovascular');}
+ if(alerts.includes('hypertension')||/hipertens/.test(conditions)){add(caution,'Hipertensão','Confirmar controle pressórico atual e considerar aferição antes do atendimento quando clinicamente indicado.','Pressão');questions.push('Quando foi a última aferição da pressão e qual foi o valor?');}
+ if(alerts.includes('diabetes')||/diabetes/.test(conditions)){add(caution,'Diabetes','Revisar controle glicêmico, alimentação/jejum e medicações de acordo com o procedimento planejado.','Metabólico');questions.push('Como está o controle da glicemia atualmente?');}
+ if(alerts.includes('pregnancy')||String(anam.pregnancy||'').toLowerCase().includes('sim')){add(caution,'Gestação / possibilidade de gestação','Confirmar fase gestacional e necessidade do atendimento. Priorizar avaliação individual do procedimento e medicamentos.','Gestação');}
+ if(alerts.includes('immunosuppression')){add(caution,'Imunossupressão','Revisar condição de base e medicamentos imunossupressores antes de definir o plano clínico.','Imunidade');}
+ if(alerts.includes('kidneyDisease')){add(caution,'Doença renal','Revisar função renal e medicamentos em uso antes de prescrever ou ajustar medicamentos.','Renal');}
+ if(alerts.includes('liverDisease')){add(caution,'Doença hepática','Revisar condição hepática e medicamentos em uso antes de prescrever.','Hepático');}
+ if(/dipirona|metamizol|ibuprofeno|amoxicilina|penicilina|lidocaína/.test(allergies))questions.push('Confirme o nome do medicamento associado à reação alérgica e descreva a reação.');
+ if(medications)questions.push('Há algum medicamento novo, ajuste de dose ou mudança recente no tratamento?');
+ if(!complaint)questions.push('Qual é a queixa principal e há quanto tempo ela começou?');
+ if(!anam.plannedProcedure)questions.push('Qual procedimento está sendo planejado para este atendimento?');
+ if(!anam.procedureRegion)questions.push('Qual região/elemento dentário será tratado?');
+ if(!weight)questions.push('Qual é o peso atual do paciente?');
+ if(!height)questions.push('Qual é a altura do paciente?');
+ if(!anam.notes&&!anam.previousTreatments)questions.push('Existe algum tratamento odontológico anterior ou observação clínica importante que ainda não foi registrada?');
+ if(relevantTeeth.length===0)questions.push('Há dentes com achados/diagnósticos que devem ser detalhados no odontograma?');
+ if(complaint){
+   if(/dor|sensib|incha|edema|febre|pus|fístula|sangra/.test(complaint.toLowerCase()))add(caution,'Queixa principal requer investigação','A queixa relatada contém sinais/sintomas que devem ser correlacionados com exame clínico, testes e exames complementares antes do tratamento definitivo.','Queixa');
+ }
+ if(relevantTeeth.length)add(caution,`${relevantTeeth.length} dente(s) com registro clínico detalhado`,'Use os achados, diagnósticos e tratamentos registrados por dente para organizar prioridades e evitar que algum elemento relevante fique fora do plano.','Odontograma');
+ if(bmi!==null)add(caution,'Dados antropométricos disponíveis',`Peso ${weight.toFixed(1)} kg • altura ${height.toFixed(0)} cm • IMC calculado ${bmi.toFixed(1)}. Use como dado auxiliar e interprete no contexto clínico. Não usar o IMC isoladamente para definir anestesia ou conduta.`,'Dados');
+ const risk=critical.length>=2?'alto':critical.length===1||caution.length>=2?'moderado':'baixo';
+ const summary=`Paciente ${patient?.name||'sem nome'}${age!==null?`, ${age} anos`:''}. ${complaint?`Queixa principal: ${complaint}. `:''}A análise identificou ${critical.length+caution.length} ponto(s) de atenção${relevantTeeth.length?` e ${relevantTeeth.length} dente(s) com detalhes clínicos`:''}. ${anam.plannedProcedure?`Procedimento informado: ${anam.plannedProcedure}.`:''} Use os itens abaixo como apoio à revisão clínica.`;
+ return {critical,caution,questions:[...new Set(questions)],risk,label:type==='child'?'Infantil':type==='young'?'Jovem':type==='elderly'?'Idoso':'Adulto',summary,metrics:{weight,height,bmi,complaint,relevantTeeth}};
+}
+
+function buildOrvittaQuestionAnswer(question,patient,anam,toothDetails={}){
+ const q=String(question||'').toLowerCase();
+ const teeth=Object.entries(toothDetails||{}).filter(([,v])=>String(v?.findings||v?.diagnosis||v?.treatment||'').trim());
+ const toothLines=teeth.map(([n,v])=>`${n}: ${v?.diagnosis||v?.findings||'sem diagnóstico'}${v?.treatment?` → ${v.treatment}`:''}`).join('\n');
+ if(/plano de tratamento|plano completo|tratamento do início|inicio ao fim/.test(q)){
+  const phases=[
+   `1. Avaliação e confirmação diagnóstica — partir da queixa principal: ${anam.chiefComplaint||'não informada'}. Correlacionar história, exame clínico e exames complementares necessários.`,
+   `2. Controle de urgência e risco — priorizar dor, infecção, trauma ou comprometimento funcional quando presentes e esclarecer alertas clínicos.`,
+   `3. Adequação / controle da doença — organizar controle de biofilme, dieta, cárie, doença periodontal e fatores de risco identificados.`,
+   `4. Tratamento por prioridade — ${teeth.length?`${teeth.length} dente(s) possuem registros detalhados; ordenar por urgência, atividade da doença, prognóstico e função.`:'detalhar os dentes relevantes antes de fechar a sequência definitiva.'}`,
+   `5. Tratamento definitivo — executar as intervenções definidas após confirmação diagnóstica e análise de riscos/benefícios.`,
+   `6. Reabilitação e acabamento — reavaliar função, estética, oclusão e necessidade de etapas complementares.`,
+   `7. Manutenção — definir retornos, prevenção, higiene, acompanhamento e reavaliação periódica.`
+  ];
+  return `Plano estruturado para ${patient?.name||'o paciente'}\n\n${phases.join('\n')}\n\nCONTEXTO ANALISADO\n• Queixa: ${anam.chiefComplaint||'não informada'}\n• Procedimento/região: ${anam.plannedProcedure||'não informado'} / ${anam.procedureRegion||'não informada'}\n• Peso/altura: ${anam.weight||'não informado'} kg / ${anam.height||'não informada'} cm\n• Dentes detalhados: ${teeth.length}\n${toothLines?`\nRegistros por dente:\n${toothLines}`:''}\n\nConfirme diagnóstico, exames, contraindicações, medicamentos, alergias e protocolos aplicáveis antes da execução.`;
+ }
+ if(/tubete|tubetes|anestésico|anestesia/.test(q)) return `Posso organizar a análise anestésica usando idade, peso (${anam.weight||'não informado'} kg), alergias, medicamentos, condições sistêmicas, procedimento (${anam.plannedProcedure||'não informado'}) e região (${anam.procedureRegion||'não informada'}). A escolha do agente e o limite de dose dependem da apresentação/concentração e devem ser conferidos na bula/fonte farmacológica e no protocolo adotado pela clínica. Preenchendo esses dados, a Orvitta pode montar um checklist e estruturar os cálculos para revisão do cirurgião-dentista.`;
+ if(/queixa|dor|sintoma/.test(q)) return `Queixa principal registrada: “${anam.chiefComplaint||'não informada'}”. Posso organizar hipóteses, perguntas complementares, sinais que merecem confirmação, exames complementares e prioridades, cruzando com ${teeth.length} dente(s) detalhado(s).`;
+ if(/dente|odontograma/.test(q)) return teeth.length?`Encontrei ${teeth.length} dente(s) com registros.\n\n${toothLines}\n\nPosso agrupar os dentes por diagnóstico, identificar prioridades e montar a sequência do tratamento para revisão.`:`Ainda não existem detalhes clínicos por dente. Preencha achado, diagnóstico e conduta nos elementos relevantes.`;
+ if(/faltando|falta|completar|o que preciso/.test(q)) return `Para deixar a análise mais robusta, confira queixa principal e evolução, peso, altura, medicamentos com dose/frequência, alergias e reações, condições sistêmicas, sinais/vitais relevantes, procedimento, região, histórico de sangramento, exames e registros por dente.`;
+ if(/medicamento|interação|interacoes|interações/.test(q)) return `Revise nome, dose, frequência e mudanças recentes de cada medicamento e confronte com alergias, condições clínicas, procedimento planejado e referências farmacológicas aplicáveis.`;
+ return `Entendi. Estou usando o contexto de ${patient?.name||'este paciente'}, incluindo anamnese, queixa principal, peso/altura, alertas e odontograma. Posso responder em formato de checklist, análise de risco, perguntas complementares ou plano de tratamento para revisão profissional.`;
+}
+
+function buildTreatmentPlanDraft(patient,anam,result,toothDetails={}){
+ const hasUrgent=(result?.critical?.length||0)>0; const questions=result?.questions||[];
+ const teeth=Object.entries(toothDetails||{}).filter(([,v])=>String(v?.findings||v?.diagnosis||v?.treatment||'').trim());
+ return {steps:[
+  {title:'1. Queixa e objetivo',text:`Registrar e investigar a queixa principal: ${anam.chiefComplaint||'não informada'}. Correlacionar com exame clínico e exames complementares necessários.`},
+  {title:'2. Segurança clínica',text:hasUrgent?'Revisar primeiro os alertas críticos identificados e esclarecer as perguntas pendentes.':'Revisar comorbidades, alergias, medicamentos, peso/altura e demais fatores de risco antes do procedimento.'},
+  {title:'3. Priorizar os dentes',text:teeth.length?`Considerar os ${teeth.length} dente(s) detalhados no odontograma e ordenar por urgência, infecção/dor, prognóstico e objetivo funcional.`:'Detalhar os achados e diagnósticos por dente antes de fechar prioridades.'},
+  {title:'4. Organizar por fases',text:`Procedimento informado: ${anam.plannedProcedure||'não informado'}${anam.procedureRegion?` • Região: ${anam.procedureRegion}`:''}. Montar fase de controle, tratamento definitivo, reabilitação e manutenção conforme o diagnóstico.`},
+  {title:'5. Manutenção',text:'Definir retornos, prevenção, higiene, monitoramento e reavaliação do resultado.'}
+ ],note:questions.length?`Antes de fechar o plano, esclarecer ${questions.length} pergunta(s) sugerida(s) pela análise.`:'Confirmar todas as informações clínicas, exames e protocolos aplicáveis antes de executar o plano.'};
+}
+
+function OrvittaAIChat({result=null,patient,anam,toothDetails={},radiographAttachments=[],data=null,onPatientChange,embedded=false}){
+ const [question,setQuestion]=useState('');
+ const [messages,setMessages]=useState([]);
+ const [busy,setBusy]=useState(false);
+ const [selectedRadiograph,setSelectedRadiograph]=useState(radiographAttachments[0]?.id||'');
+ const [chatFiles,setChatFiles]=useState([]);
+ const patientList=data?.patients||[];
+ const selectedImage=radiographAttachments.find(x=>String(x.id)===String(selectedRadiograph));
+ const countTeeth=Object.keys(toothDetails||{}).filter(n=>Object.values(toothDetails[n]||{}).some(v=>String(v||'').trim())).length;
+ const quick=['Analise este paciente','Monte um plano de tratamento completo','O que está faltando neste caso?','Analise os dentes do odontograma','Me ajude a revisar a anestesia'];
+ const findMentionedPatient=q=>{
+   if(!patientList.length)return null;
+   const normalized=String(q||'').toLowerCase();
+   return patientList.find(p=>p.name&&normalized.includes(String(p.name).toLowerCase()))||null;
+ };
+ const readImage=file=>new Promise((resolve,reject)=>{const r=new FileReader();r.onload=()=>resolve(r.result);r.onerror=reject;r.readAsDataURL(file)});
+ const addChatFiles=async e=>{
+   const files=Array.from(e.target.files||[]).filter(f=>f.type.startsWith('image/')).slice(0,5);
+   if(!files.length)return;
+   const mapped=[];
+   for(const file of files){try{mapped.push({id:`chat-${Date.now()}-${Math.random()}`,name:file.name,type:file.type,dataUrl:await readImage(file),size:file.size})}catch{}}
+   setChatFiles(prev=>[...prev,...mapped]);
+   e.target.value='';
+ };
+ const removeChatFile=id=>setChatFiles(prev=>prev.filter(x=>x.id!==id));
+ const pushAnswer=(q,answer,patientUsed=patient)=>{setMessages(prev=>[...prev,{role:'user',text:q,patientName:patientUsed?.name||''},{role:'assistant',text:answer}]);setQuestion('')};
+ const ask=async(preset='')=>{
+   const q=String(preset||question).trim();if(!q||busy)return;
+   const mentioned=findMentionedPatient(q);
+   const patientUsed=mentioned||patient;
+   if(mentioned&&onPatientChange&&String(mentioned.id)!==String(patient?.id)) onPatientChange(mentioned.id);
+   const anamnesis=patientUsed&&data?getAnamnesis(data,patientUsed.id):anam;
+   const clinicalRecord=patientUsed&&data?data.records.find(r=>r.kind==='odontogram'&&String(r.patientId)===String(patientUsed.id)):null;
+   const details=clinicalRecord?.toothDetails||toothDetails;
+   const storedRxs=patientUsed&&data?data.records.filter(r=>r.kind==='attachment'&&String(r.patientId)===String(patientUsed.id)&&r.mimeType?.startsWith('image/')):radiographAttachments;
+   const rxPool=storedRxs.length?storedRxs:radiographAttachments;
+   const hasRx=rxPool.length||chatFiles.length;
+   setBusy(true);
+   try{
+     let answer;
+     const lower=q.toLowerCase();
+     const asksVision=/radiograf|raio[- ]?x|\brx\b|imagem|achado/.test(lower)||chatFiles.length>0;
+     if(asksVision&&hasRx&&ORVITTA_VISION_ENDPOINT){
+       const images=[...rxPool.map(x=>({id:x.id,name:x.name||x.fileName,url:x.url||''})),...chatFiles.map(x=>({id:x.id,name:x.name,dataUrl:x.dataUrl}))];
+       const response=await fetch(ORVITTA_VISION_ENDPOINT,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({question:q,patient:patientUsed,anamnesis,toothDetails:details,images})});
+       if(!response.ok)throw new Error('O serviço de visão respondeu com erro.');
+       const payload=await response.json();answer=payload.answer||payload.text||'Análise visual recebida, mas sem texto de resposta.';
+     }else if(asksVision&&hasRx){
+       answer=`Encontrei ${rxPool.length+chatFiles.length} imagem(ns) associada(s) ao caso. A interface já está preparada para análise visual segura, mas o endpoint de visão ainda não está configurado. Configure VITE_ORVITTA_VISION_ENDPOINT no ambiente do backend para a Orvitta receber as imagens e devolver possíveis achados com localização, evidência visual, grau de confiança e itens para confirmação clínica.`;
+     }else{
+       answer=buildOrvittaQuestionAnswer(q,patientUsed,anamnesis,details);
+     }
+     if(/plano de tratamento|plano completo|tratamento/.test(lower)&&!asksVision){
+       const analysis=buildOrvittaClinicalAnalysis(anamnesis,patientUsed,anamnesis.anamnesisType||suggestedAnamnesisType(patientUsed?.birth),patientAge(patientUsed?.birth),details);
+       const draft=buildTreatmentPlanDraft(patientUsed,anamnesis,analysis,details);
+       answer += `\n\nPLANO ESTRUTURADO\n${draft.steps.map(x=>`${x.title}: ${x.text}`).join('\n')}`;
+     }
+     pushAnswer(q,answer,patientUsed);
+   }catch(error){pushAnswer(q,`Não consegui concluir a análise agora. ${error?.message||'Verifique a conexão do assistente.'}`,patientUsed)}finally{setBusy(false)}
+ };
+ const resetChat=()=>{setMessages([]);setQuestion('');setChatFiles([])};
+ const contextLine=patient?`${patient.name} • ${patientAge(patient.birth)??'idade não informada'} anos • ${countTeeth} dentes detalhados${anam?.chiefComplaint?` • ${anam.chiefComplaint}`:''}`:'Selecione um paciente para carregar o contexto clínico.';
+ return <section className={`orvittaChatShell ${embedded?'embeddedChat':''}`}>
+   <div className="orvittaChatTop">
+    <div className="orvittaChatIdentity"><div className="orvittaChatLogo"><Sparkles size={19}/></div><div><span className="eyebrow">ORVITTA AI</span><h4>Assistente clínico</h4><small>{contextLine}</small></div></div>
+    <div className="orvittaChatTopActions">{patientList.length>0&&<select className="aiPatientSelect" value={patient?.id||''} onChange={e=>onPatientChange?.(e.target.value)}><option value="">Selecionar paciente</option>{patientList.map(p=><option value={p.id} key={p.id}>{p.name}</option>)}</select>}<button type="button" className="secondary" onClick={resetChat}><RefreshCw size={15}/> Nova conversa</button></div>
+   </div>
+   <div className="orvittaChatContext">
+    <div><b>Contexto atual</b><span>{patient?.name||'Nenhum paciente'}{anam?.plannedProcedure?` • ${anam.plannedProcedure}`:''}</span></div>
+    <div className="aiContextPills"><span>{anam?.weight?`${anam.weight} kg`:'Peso —'}</span><span>{anam?.height?`${anam.height} cm`:'Altura —'}</span><span>{radiographAttachments.length+chatFiles.length} imagem(ns)</span></div>
+   </div>
+   <div className="aiQuickPrompts">{quick.map((item,i)=><button key={i} type="button" onClick={()=>ask(item)}>{item}</button>)}</div>
+   {(radiographAttachments.length>0||chatFiles.length>0)&&<div className="aiAttachmentStrip"><div className="aiAttachmentTitle"><ImageIcon size={15}/><b>Imagens para análise</b></div><div className="aiAttachmentThumbs">{radiographAttachments.map(image=><button type="button" key={image.id} className={String(selectedRadiograph)===String(image.id)?'selected':''} onClick={()=>setSelectedRadiograph(image.id)} title={image.name||image.fileName}><img src={image.url||''} alt=""/><span>{image.name||image.fileName}</span></button>)}{chatFiles.map(image=><button type="button" key={image.id} onClick={()=>removeChatFile(image.id)} title="Remover imagem"><img src={image.dataUrl} alt=""/><span>{image.name}</span><i>×</i></button>)}</div></div>}
+   <div className="aiChatConversation">
+    {messages.length===0?<div className="aiWelcomeBig"><div className="aiWelcomeOrb"><Sparkles size={24}/></div><h5>Olá! Eu sou a Orvitta AI.</h5><p>Posso analisar o contexto do paciente, organizar perguntas, revisar o odontograma e estruturar um plano para o profissional revisar.</p><div className="aiWelcomeExamples"><span>“Analise a queixa deste paciente”</span><span>“Monte um plano completo”</span><span>“Analise a RX anexada”</span></div></div>:messages.map((m,i)=><div key={i} className={`aiBubbleRow ${m.role}`}><div className={`aiMessageBubble ${m.role}`}>{m.role==='assistant'&&<div className="aiMessageAvatar"><Sparkles size={13}/></div>}<div><small>{m.role==='assistant'?'Orvitta AI':m.patientName?'Você • '+m.patientName:'Você'}</small><p>{m.text}</p></div></div></div>)}{busy&&<div className="aiBubbleRow assistant"><div className="aiMessageBubble assistant"><div className="aiMessageAvatar"><Sparkles size={13}/></div><div><small>Orvitta AI</small><p className="aiThinking"><i></i><i></i><i></i> analisando...</p></div></div></div>}
+   </div>
+   {chatFiles.length>0&&<div className="aiPendingFiles"><ImageIcon size={14}/><span>{chatFiles.length} imagem(ns) pronta(s) para envio</span><button type="button" onClick={()=>setChatFiles([])}>limpar</button></div>}
+   <div className="aiChatComposer">
+    <label className="aiAttachButton" title="Adicionar imagem"><Paperclip size={18}/><input type="file" accept="image/*" multiple hidden onChange={addChatFiles}/></label>
+    <textarea value={question} onChange={e=>setQuestion(e.target.value)} onKeyDown={e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();ask()}}} placeholder={patient?'Pergunte qualquer coisa sobre este caso...':'Selecione um paciente e comece a conversa...'} disabled={!patient&&!data}/>
+    <button type="button" className="primary aiSendButton" onClick={()=>ask()} disabled={busy||!question.trim()||!patient}><Sparkles size={17}/></button>
+   </div>
+   <div className="aiChatFooter"><span><ShieldCheck size={14}/> Apoio à revisão clínica • confirme condutas, doses e prescrições em fontes/protocolos aplicáveis.</span><small>Enter envia • Shift+Enter quebra linha</small></div>
+ </section>;
+}
+
+function OrvittaAIPage({data,can,initialPatientId,onOpenRecord}){
+ const [selectedPatientId,setSelectedPatientId]=useState(initialPatientId||data.patients[0]?.id||'');
+ const [patientQuery,setPatientQuery]=useState('');
+ useEffect(()=>{if(initialPatientId)setSelectedPatientId(initialPatientId);else if(!selectedPatientId&&data.patients[0])setSelectedPatientId(data.patients[0].id)},[initialPatientId,data.patients,selectedPatientId]);
+ const patient=data.patients.find(p=>String(p.id)===String(selectedPatientId))||null;
+ const anam=patient?getAnamnesis(data,patient.id):anamnesisDefaults;
+ const odonto=data.records.find(r=>r.kind==='odontogram'&&String(r.patientId)===String(patient?.id));
+ const toothDetails=odonto?.toothDetails||{};
+ const radiographAttachments=data.records.filter(r=>r.kind==='attachment'&&String(r.patientId)===String(patient?.id)&&r.mimeType?.startsWith('image/'));
+ const result=patient?buildOrvittaClinicalAnalysis(anam,patient,anam.anamnesisType||suggestedAnamnesisType(patient.birth),patientAge(patient.birth),toothDetails):null;
+ const filteredPatients=data.patients.filter(p=>`${p.name||''} ${p.phone||''} ${p.email||''}`.toLowerCase().includes(patientQuery.toLowerCase()));
+ return <div className="orvittaAIFullPage">
+   <div className="aiStandaloneHero"><div><span className="eyebrow"><Sparkles size={13}/> CENTRAL DE INTELIGÊNCIA</span><h2>Orvitta AI</h2><p>Converse com os dados clínicos do Orvitta. Analise pacientes, odontogramas, queixas, anexos e radiografias no mesmo lugar.</p></div>{patient&&<button className="secondary" type="button" onClick={()=>onOpenRecord?.(patient.id)}><FileText size={16}/> Abrir prontuário</button>}</div>
+   <div className="aiStandaloneGrid">
+    <aside className="aiPatientRail">
+      <div className="aiRailHead"><div><b>Pacientes</b><small>{filteredPatients.length} de {data.patients.length}</small></div><span className="aiRailSpark"><Sparkles size={14}/></span></div>
+      <div className="aiPatientSearch"><Search size={15}/><input value={patientQuery} onChange={e=>setPatientQuery(e.target.value)} placeholder="Pesquisar paciente..."/></div>
+      <div className="aiPatientList">{filteredPatients.map(p=><button type="button" key={p.id} className={`aiPatientRailItem ${String(p.id)===String(patient?.id)?'active':''}`} onClick={()=>setSelectedPatientId(p.id)}><span className="patientMiniAvatar">{(p.name||'PA').slice(0,2).toUpperCase()}</span><span><b>{p.name}</b><small>{p.phone||p.email||'Sem contato'}</small></span>{String(p.id)===String(patient?.id)&&<Check size={15}/>}</button>)}{!filteredPatients.length&&<div className="aiRailEmpty">Nenhum paciente encontrado.</div>}</div>
+    </aside>
+    <div className="aiStandaloneCenter">
+      {patient?<OrvittaAIChat data={data} patient={patient} anam={anam} toothDetails={toothDetails} radiographAttachments={radiographAttachments} onPatientChange={setSelectedPatientId}/>:<div className="aiNoPatient"><div><Sparkles size={24}/></div><h3>Comece escolhendo um paciente</h3><p>A Orvitta AI vai usar a anamnese, odontograma e anexos desse paciente como contexto.</p></div>}
+    </div>
+    <aside className="aiCaseRail">{patient?<>
+      <div className="aiCaseHead"><div className="avatar large">{patient.name.split(' ').map(x=>x[0]).slice(0,2).join('')}</div><div><b>{patient.name}</b><small>{patientAge(patient.birth)??'—'} anos</small></div></div>
+      <div className="aiCaseActions"><button type="button" className="secondary" onClick={()=>onOpenRecord?.(patient.id)}><FileText size={14}/> Prontuário</button></div>
+      <div className="aiCaseStats"><div><span>Queixa</span><b>{anam.chiefComplaint||'Não informada'}</b></div><div><span>Alertas</span><b>{result.critical.length+result.caution.length}</b></div><div><span>Odontograma</span><b>{Object.keys(toothDetails).length} dentes</b></div><div><span>Imagens</span><b>{radiographAttachments.length}</b></div></div>
+      <div className="aiCaseInsight"><b>Resumo rápido</b><p>{result.summary}</p></div>
+      <div className="aiCaseChecklist"><b>Contexto disponível</b><span>{anam.medications?'✓ Medicamentos':'○ Medicamentos'}</span><span>{anam.allergies?'✓ Alergias':'○ Alergias'}</span><span>{anam.conditions?'✓ Condições':'○ Condições'}</span><span>{Object.keys(toothDetails).length?'✓ Dentes detalhados':'○ Detalhes por dente'}</span><span>{radiographAttachments.length?'✓ Radiografias':'○ Radiografias'}</span></div>
+    </>:<Empty text="Cadastre um paciente para começar."/>}</aside>
+   </div>
+ </div>;
+}
+
+function AnamnesisForm({anam,setAnam,patient,saving,save,toothDetails={},radiographAttachments=[]}){
  const type=anam.anamnesisType||suggestedAnamnesisType(patient?.birth),age=patientAge(patient?.birth),update=(key,value)=>setAnam(current=>({...current,[key]:value})),nested=(group,key,value)=>setAnam(current=>({...current,[group]:{...(current[group]||{}),[key]:value}})),selectedAlerts=Array.isArray(anam.alerts)?anam.alerts:[];
+ const [aiBusy,setAiBusy]=useState(false),[aiResult,setAiResult]=useState(null),[aiQuestions,setAiQuestions]=useState([]),[section,setSection]=useState('identification');
  const text=(key,label,area=false)=><AnamnesisField label={label} value={anam[key]} onChange={value=>update(key,value)} area={area}/>;
  const group=(name,key,label,area=false)=><AnamnesisField label={label} value={anam[name]?.[key]} onChange={value=>nested(name,key,value)} area={area}/>;
- const toggleAlert=key=>update("alerts",selectedAlerts.includes(key)?selectedAlerts.filter(item=>item!==key):[...selectedAlerts,key]);
- return <div className="anamnesisPanel"><div className="sectionTitle"><div><h4>Anamnese do paciente</h4><small>{age===null?"Idade não informada":`${age} anos`} • sugestão automática, com ajuste manual</small></div><button className="primary" onClick={save} disabled={saving}><CheckCircle size={17}/> {saving?"Salvando...":"Salvar anamnese"}</button></div><div className="formGrid clinicalGrid"><label>Tipo de anamnese<select value={type} onChange={e=>update("anamnesisType",e.target.value)}><option value="child">Infantil (0 a 12 anos)</option><option value="young">Jovem (13 a 17 anos)</option><option value="adult">Adulto (18 a 59 anos)</option><option value="elderly">Idoso (60 anos ou mais)</option></select></label>{text("bloodType","Tipo sanguíneo")}{text("allergies","Alergias")}{text("medications","Medicamentos em uso")}{text("conditions","Doenças / condições relevantes")}{text("surgeries","Cirurgias / internações anteriores")}</div>
- <AnamnesisSection title="ALERTAS CLÍNICOS"><div className="alertPicker">{clinicalAlertOptions.map(item=><label key={item.key}><input type="checkbox" checked={selectedAlerts.includes(item.key)} onChange={()=>toggleAlert(item.key)}/>{item.label}</label>)}</div>{selectedAlerts.includes("medicationAllergy")&&<><AnamnesisField label="Qual medicamento causa alergia?" value={anam.alertDetails?.medicationAllergy?.medicine} onChange={value=>nested("alertDetails","medicationAllergy",{...(anam.alertDetails?.medicationAllergy||{}),medicine:value})}/><AnamnesisField label="Qual reação?" value={anam.alertDetails?.medicationAllergy?.reaction} onChange={value=>nested("alertDetails","medicationAllergy",{...(anam.alertDetails?.medicationAllergy||{}),reaction:value})}/></>}{selectedAlerts.includes("anestheticAllergy")&&<AnamnesisField label="Anestésico / reação" value={anam.alertDetails?.anestheticAllergy} onChange={value=>nested("alertDetails","anestheticAllergy",value)}/>} {selectedAlerts.includes("anticoagulant")&&<><AnamnesisField label="Anticoagulante, dosagem e observações" value={anam.alertDetails?.anticoagulant} onChange={value=>nested("alertDetails","anticoagulant",value)}/></>}{selectedAlerts.includes("antiplatelet")&&<AnamnesisField label="Antiagregante, dosagem e observações" value={anam.alertDetails?.antiplatelet} onChange={value=>nested("alertDetails","antiplatelet",value)}/>} {selectedAlerts.includes("diabetes")&&<AnamnesisField label="Diabetes: tipo, controle e observações" value={anam.alertDetails?.diabetes} onChange={value=>nested("alertDetails","diabetes",value)}/>} {selectedAlerts.includes("other")&&<AnamnesisField label="Outro alerta" value={anam.alertDetails?.other} onChange={value=>nested("alertDetails","other",value)}/>}</AnamnesisSection>
- {type==="child"&&<><AnamnesisSection title="DADOS E DESENVOLVIMENTO">{group("child","responsible","Responsável")}{group("child","relation","Relação com o paciente")}{group("child","gestationalHistory","Histórico gestacional",true)}{group("child","pregnancyConditions","Condições durante a gestação",true)}{group("child","deliveryType","Tipo de parto")}{group("child","premature","Nascimento prematuro")}{group("child","birthWeight","Peso ao nascer")}{group("child","development","Desenvolvimento",true)}{group("child","healthConditions","Condições de saúde relevantes",true)}</AnamnesisSection><AnamnesisSection title="HISTÓRICO MÉDICO">{group("child","diseases","Doenças",true)}{group("child","hospitalizations","Internações",true)}{group("child","surgeries","Cirurgias",true)}{group("child","medications","Medicamentos",true)}{group("child","allergies","Alergias",true)}{group("child","familyHistory","Histórico familiar",true)}</AnamnesisSection><AnamnesisSection title="HÁBITOS, ALIMENTAÇÃO E HIGIENE">{group("child","habits","Sucção de dedo, chupeta, mamadeira, roer unhas, respiração bucal e bruxismo",true)}{group("child","sugarFrequency","Frequência de consumo de açúcar")}{group("child","sugaryDrinks","Bebidas açucaradas")}{group("child","nightFeeding","Alimentação noturna")}{group("child","brushingFrequency","Frequência de escovação")}{group("child","toothpaste","Uso de creme dental")}{group("child","floss","Uso de fio dental")}{group("child","supervision","Supervisão dos responsáveis")}</AnamnesisSection><AnamnesisSection title="HISTÓRICO ODONTOLÓGICO">{group("child","firstVisit","Primeira consulta odontológica")}{group("child","experiences","Experiências anteriores",true)}{group("child","treatments","Tratamentos anteriores",true)}{group("child","trauma","Trauma dentário",true)}{group("child","orthodontics","Uso de aparelho")}{group("child","other","Outras informações",true)}</AnamnesisSection></>}
- {type==="young"&&<><AnamnesisSection title="SAÚDE GERAL">{group("young","diseases","Doenças",true)}{group("young","surgeries","Cirurgias e internações",true)}{group("young","medications","Medicamentos",true)}{group("young","allergies","Alergias",true)}{group("young","medicalFollowup","Acompanhamento médico",true)}{group("young","familyHistory","Histórico familiar",true)}</AnamnesisSection><AnamnesisSection title="HÁBITOS E ROTINA">{group("young","diet","Alimentação",true)}{group("young","sugar","Consumo de açúcar")}{group("young","hygiene","Higiene bucal e fio dental",true)}{group("young","bruxism","Bruxismo e hábitos parafuncionais",true)}{group("young","smoking","Tabagismo")}{group("young","alcohol","Consumo de álcool")}{group("young","other","Outras observações",true)}</AnamnesisSection><AnamnesisSection title="SAÚDE BUCAL">{group("young","history","Histórico odontológico",true)}{group("young","treatments","Tratamentos anteriores",true)}{group("young","orthodontics","Aparelho ortodôntico")}{group("young","pain","Dores e sensibilidade",true)}{group("young","bleeding","Sangramento gengival")}{group("young","otherOral","Outras informações",true)}</AnamnesisSection></>}
- {type==="adult"&&<><AnamnesisSection title="SAÚDE GERAL">{text("pregnancy","Gestação / possibilidade de gestação")}{text("familyHistory","Histórico familiar",true)}{text("conditions","Doenças atuais e anteriores",true)}{text("surgeries","Cirurgias e internações",true)}{text("medications","Medicamentos de uso contínuo",true)}{text("allergies","Alergias",true)}{text("medicalFollowup","Acompanhamento médico",true)}</AnamnesisSection><AnamnesisSection title="CONDIÇÕES IMPORTANTES">{group("adult","diabetes","Diabetes")}{group("adult","hypertension","Hipertensão")}{group("adult","heartDisease","Doenças cardíacas")}{group("adult","respiratory","Doenças respiratórias")}{group("adult","kidney","Doenças renais")}{group("adult","liver","Doenças hepáticas")}{group("adult","coagulation","Alterações de coagulação")}{group("adult","immunosuppression","Imunossupressão")}{group("adult","other","Outras condições",true)}</AnamnesisSection><AnamnesisSection title="MEDICAMENTOS E HÁBITOS">{group("adult","medicationList","Medicamento, dosagem, frequência e observações",true)}{text("smoking","Tabagismo")}{text("alcohol","Álcool")}{text("bruxism","Bruxismo")}{text("hygiene","Alimentação, açúcar e higiene bucal",true)}</AnamnesisSection><AnamnesisSection title="HISTÓRICO ODONTOLÓGICO">{text("previousTreatments","Tratamentos, extrações, implantes, próteses e ortodontia",true)}{group("adult","specialties","Endodontia e periodontia",true)}{group("adult","symptoms","Dores, sensibilidade e sangramento",true)}{group("adult","otherOral","Outras observações",true)}</AnamnesisSection></>}
- {type==="elderly"&&<><AnamnesisSection title="SAÚDE GERAL">{group("elderly","chronicDiseases","Doenças crônicas",true)}{group("elderly","surgeries","Cirurgias e internações",true)}{group("elderly","medicalFollowup","Acompanhamento médico",true)}{group("elderly","allergies","Alergias",true)}{group("elderly","familyHistory","Histórico familiar",true)}</AnamnesisSection><AnamnesisSection title="MEDICAMENTOS E CONDIÇÕES IMPORTANTES">{group("elderly","medications","Medicamentos, dosagem, frequência e observações",true)}{group("elderly","diabetes","Diabetes")}{group("elderly","hypertension","Hipertensão")}{group("elderly","heartDisease","Doenças cardíacas")}{group("elderly","coagulation","Alterações de coagulação")}{group("elderly","anticoagulants","Anticoagulantes / antiagregantes",true)}{group("elderly","kidney","Doenças renais")}{group("elderly","liver","Doenças hepáticas")}{group("elderly","immunosuppression","Imunossupressão")}{group("elderly","limitations","Limitações funcionais",true)}</AnamnesisSection><AnamnesisSection title="SAÚDE BUCAL E ROTINA">{group("elderly","prostheses","Próteses e implantes",true)}{group("elderly","hygieneDifficulty","Dificuldade de higiene")}{group("elderly","xerostomia","Xerostomia")}{group("elderly","pain","Dor e sensibilidade",true)}{group("elderly","bleeding","Sangramento")}{group("elderly","chewing","Dificuldade de mastigação")}{group("elderly","swallowing","Dificuldade de deglutição")}{group("elderly","caregiver","Responsável / cuidador")}{group("elderly","assistance","Necessidade de auxílio")}{group("elderly","frequency","Frequência de higiene")}{group("elderly","other","Observações importantes",true)}</AnamnesisSection></>}
- <div className="formGrid clinicalGrid">{text("bruxism","Bruxismo / apertamento")}{text("hygiene","Higiene bucal / hábitos",true)}{text("lastDentist","Última consulta odontológica")}{text("previousTreatments","Tratamentos odontológicos anteriores",true)}{text("notes","Observações importantes",true)}</div></div>;
+ const toggleAlert=key=>update('alerts',selectedAlerts.includes(key)?selectedAlerts.filter(item=>item!==key):[...selectedAlerts,key]);
+ const analyzeWithOrvitta=async()=>{setAiBusy(true);setAiResult(null);setAiQuestions([]);await new Promise(resolve=>setTimeout(resolve,650));setAiResult(buildOrvittaClinicalAnalysis(anam,patient,type,age,toothDetails));setAiBusy(false);setSection('ai');};
+ const sections=[['identification','👤','Identificação'],['health','❤️','Saúde geral'],['meds','💊','Medicamentos e alergias'],['habits','🦷','Hábitos e saúde bucal'],['history','📋','Histórico odontológico'],['alerts','🚨','Alertas clínicos']];
+ return <div className="anamnesisExperience"><div className="sectionTitle anamnesisHeader"><div><span className="eyebrow"><HeartPulse size={13}/> ANAMNESE INTELIGENTE</span><h4>Anamnese do paciente</h4><small>{age===null?'Idade não informada':`${age} anos`} • formulário guiado • revisão assistida</small></div><div className="anamnesisHeaderActions"><button type="button" className="aiAnalyzeButton" onClick={analyzeWithOrvitta} disabled={aiBusy}><Sparkles size={17}/> {aiBusy?'Analisando...':'Analisar com Orvitta AI'}</button><button className="primary" onClick={save} disabled={saving}><CheckCircle size={17}/> {saving?'Salvando...':'Salvar anamnese'}</button></div></div>
+   <div className="anamnesisStepper">{sections.map(([key,icon,label],i)=><button type="button" key={key} className={section===key?'active':''} onClick={()=>setSection(key)}><span>{icon}</span><b>{i+1}</b><small>{label}</small></button>)}<button type="button" className={section==='ai'?'active aiStep':''} onClick={()=>setSection('ai')}><Sparkles size={16}/><b>AI</b><small>Assistente</small></button></div>
+   {aiBusy&&<div className="orvittaAiLoading"><Sparkles size={17}/><div><b>Orvitta AI está revisando a anamnese...</b><small>Cruzando condições, alertas, medicamentos e informações registradas.</small></div></div>}
+   {section==='ai'?<OrvittaAIChat result={aiResult} patient={patient} anam={anam} toothDetails={toothDetails} radiographAttachments={radiographAttachments} embedded/>:<>
+    {section==='identification'&&<><div className="formGrid clinicalGrid"><label>Tipo de anamnese<select value={type} onChange={e=>update('anamnesisType',e.target.value)}><option value="child">Infantil (0 a 12 anos)</option><option value="young">Jovem (13 a 17 anos)</option><option value="adult">Adulto (18 a 59 anos)</option><option value="elderly">Idoso (60 anos ou mais)</option></select></label>{text('bloodType','Tipo sanguíneo')}{text('weight','Peso (kg)')}{text('height','Altura (cm)')}{text('plannedProcedure','Procedimento planejado')}{text('procedureRegion','Região / dentes a tratar')}{text('pregnancy','Gestação / possibilidade de gestação')}{text('familyHistory','Histórico familiar',true)}{text('chiefComplaint','Queixa principal',true)}</div><div className="anthroHint">{anam.weight&&anam.height?`IMC calculado: ${(Number(anam.weight)/(Number(anam.height)/100)**2).toFixed(1)} • usado apenas como dado auxiliar.`:'Informe peso e altura para enriquecer a análise clínica.'}</div></> }
+    {section==='health'&&<><AnamnesisSection title="SAÚDE GERAL"><div className="alertPicker">{clinicalAlertOptions.filter(x=>['diabetes','hypertension','heartDisease','kidneyDisease','liverDisease','respiratoryDisease','immunosuppression','pregnancy','bruxism'].includes(x.key)).map(item=><label key={item.key}><input type="checkbox" checked={selectedAlerts.includes(item.key)} onChange={()=>toggleAlert(item.key)}/>{item.label}</label>)}</div>{text('conditions','Doenças / condições relevantes',true)}{text('surgeries','Cirurgias / internações anteriores',true)}{text('medicalFollowup','Acompanhamento médico',true)}</AnamnesisSection></>}
+    {section==='meds'&&<><AnamnesisSection title="MEDICAMENTOS E ALERGIAS">{text('medications','Medicamentos em uso — nome, dose e frequência',true)}{text('allergies','Alergias — substância e reação',true)}<div className="alertPicker">{clinicalAlertOptions.filter(x=>['medicationAllergy','anestheticAllergy','anticoagulant','antiplatelet','coagulation'].includes(x.key)).map(item=><label key={item.key}><input type="checkbox" checked={selectedAlerts.includes(item.key)} onChange={()=>toggleAlert(item.key)}/>{item.label}</label>)}</div>{selectedAlerts.includes('medicationAllergy')&&<><AnamnesisField label="Medicamento causador" value={anam.alertDetails?.medicationAllergy?.medicine} onChange={value=>nested('alertDetails','medicationAllergy',{...(anam.alertDetails?.medicationAllergy||{}),medicine:value})}/><AnamnesisField label="Reação apresentada" value={anam.alertDetails?.medicationAllergy?.reaction} onChange={value=>nested('alertDetails','medicationAllergy',{...(anam.alertDetails?.medicationAllergy||{}),reaction:value})}/></>}{selectedAlerts.includes('anestheticAllergy')&&<AnamnesisField label="Anestésico / reação" value={anam.alertDetails?.anestheticAllergy} onChange={value=>nested('alertDetails','anestheticAllergy',value)}/>} </AnamnesisSection></>}
+    {section==='habits'&&<><AnamnesisSection title="HÁBITOS, ROTINA E HIGIENE">{text('hygiene','Higiene bucal / hábitos',true)}{text('bruxism','Bruxismo / apertamento')}{text('smoking','Tabagismo')}{text('alcohol','Álcool')}{text('diet','Alimentação / frequência de açúcar',true)}</AnamnesisSection></>}
+    {section==='history'&&<><AnamnesisSection title="HISTÓRICO ODONTOLÓGICO">{text('lastDentist','Última consulta odontológica')}{text('previousTreatments','Tratamentos odontológicos anteriores',true)}{text('pain','Dor, sensibilidade ou sangramento',true)}{text('notes','Traumas, aparelhos, próteses, implantes ou outras informações',true)}</AnamnesisSection></>}
+    {section==='alerts'&&<AnamnesisSection title="ALERTAS CLÍNICOS"><div className="alertPicker">{clinicalAlertOptions.map(item=><label key={item.key}><input type="checkbox" checked={selectedAlerts.includes(item.key)} onChange={()=>toggleAlert(item.key)}/>{item.label}</label>)}</div>{selectedAlerts.includes('other')&&<AnamnesisField label="Outro alerta" value={anam.alertDetails?.other} onChange={value=>nested('alertDetails','other',value)}/>}</AnamnesisSection>}
+    <div className="anamnesisBottomHint"><Sparkles size={15}/><span>Preencha as etapas e use <b>Analisar com Orvitta AI</b> para gerar alertas, perguntas pendentes e um rascunho organizado de tratamento.</span></div>
+   </>}
+ </div>;
 }
 
 function Records({data,write,update,remove,userId,uid,initialPatientId,can}){
  const [patient,setPatient]=useState(()=>data.patients.find(p=>p.id===initialPatientId)||null),[tab,setTab]=useState("overview"),[note,setNote]=useState(""),[complaint,setComplaint]=useState(""),[diagnosis,setDiagnosis]=useState(""),[toothStates, setToothStates] = useState({});
   const [infantToothStates, setInfantToothStates] = useState({});
+ const [toothDetails, setToothDetails] = useState({});
   // odontogramMode removed – mixed dentition always active
-  const permanentUpper = [11,12,13,14,15,16,17,18,21,22,23,24,25,26,27,28];
-  const permanentLower = [31,32,33,34,35,36,37,38,41,42,43,44,45,46,47,48];
+  const permanentUpper = [18,17,16,15,14,13,12,11,21,22,23,24,25,26,27,28];
+  const permanentLower = [38,37,36,35,34,33,32,31,41,42,43,44,45,46,47,48];
   const infantUpperRight = [55,54,53,52,51];
   const infantUpperLeft = [61,62,63,64,65];
   const infantLowerLeft = [71,72,73,74,75];
   const infantLowerRight = [81,82,83,84,85];
+  const patientAgeValue = patientAge(patient?.birth);
+  const isChildPatient = patientAgeValue !== null && patientAgeValue <= 12;
+  const upperTeeth = isChildPatient ? [...infantUpperRight,...infantUpperLeft] : permanentUpper;
+  const lowerTeeth = isChildPatient ? [...infantLowerLeft,...infantLowerRight] : permanentLower;
+  const allTeeth = [...upperTeeth,...lowerTeeth];
 const [saving,setSaving]=useState(false),[attach,setAttach]=useState({category:"Outros",name:"",description:""});
  const [anam,setAnam]=useState(anamnesisDefaults);
  const [editPatient,setEditPatient]=useState(false),[patientForm,setPatientForm]=useState({}),[attachmentStatus,setAttachmentStatus]=useState(""),[localAttachments,setLocalAttachments]=useState([]);
@@ -450,7 +665,7 @@ const [saving,setSaving]=useState(false),[attach,setAttach]=useState({category:"
 ];
  useEffect(()=>{if(initialPatientId){const target=data.patients.find(p=>p.id===initialPatientId);if(target)setPatient(target);}},[initialPatientId,data.patients]);
  useEffect(()=>{if(!patient){setToothStates({});setAnam(anamnesisDefaults);return;}const saved=data.records.find(r=>r.kind==="odontogram"&&r.patientId===patient.id);setToothStates(saved?.toothStates||{});
-    setInfantToothStates(saved?.infantToothStates||{});const a=data.records.find(r=>r.kind==="anamnesis"&&r.patientId===patient.id);setAnam({...anamnesisDefaults,...(a?.data||{}),alertDetails:{...(a?.data?.alertDetails||{})}});const latest=[...data.records].filter(r=>r.patientId===patient.id&&r.kind==="evolution").sort((a,b)=>String(b.createdAt||b.date||"").localeCompare(String(a.createdAt||a.date||"")))[0];setComplaint(latest?.complaint||"");setDiagnosis(latest?.diagnosis||"");},[patient,data.records]);
+    setInfantToothStates(saved?.infantToothStates||{});setToothDetails(saved?.toothDetails||{});const a=data.records.find(r=>r.kind==="anamnesis"&&r.patientId===patient.id);setAnam({...anamnesisDefaults,...(a?.data||{}),alertDetails:{...(a?.data?.alertDetails||{})}});const latest=[...data.records].filter(r=>r.patientId===patient.id&&r.kind==="evolution").sort((a,b)=>String(b.createdAt||b.date||"").localeCompare(String(a.createdAt||a.date||"")))[0];setComplaint(latest?.complaint||"");setDiagnosis(latest?.diagnosis||"");},[patient,data.records]);
 const cycleTooth = t => {
   const current = toothStates[t] || "healthy";
   const i = statuses.findIndex(x => x.key === current);
@@ -462,12 +677,14 @@ const cycleInfant = t => {
   const i = statuses.findIndex(x => x.key === current);
   setInfantToothStates(x => ({ ...x, [t]: statuses[(i + 1) % statuses.length].key }));
 };
- const saveOdontogram=async()=>{if(!patient)return;setSaving(true);const existing=data.records.find(r=>r.kind==="odontogram"&&r.patientId===patient.id),payload={kind:"odontogram",patientId:patient.id,patient:patient.name,toothStates,infantToothStates,date:today(),isLocked:false};if(existing)await update("records",existing.id,payload);else await write("records",payload);setSaving(false)};
+  const updateToothDetail=(tooth,key,value)=>setToothDetails(prev=>({...prev,[tooth]:{...(prev[tooth]||{}),[key]:value}}));
+const saveOdontogram=async()=>{if(!patient)return;setSaving(true);const existing=data.records.find(r=>r.kind==="odontogram"&&r.patientId===patient.id),payload={kind:"odontogram",patientId:patient.id,patient:patient.name,toothStates,infantToothStates,toothDetails,date:today(),isLocked:false};if(existing)await update("records",existing.id,payload);else await write("records",payload);setSaving(false)};
  const saveEvolution=async()=>{if(!patient||(!note.trim()&&!complaint.trim()&&!diagnosis.trim()))return;await write("records",{kind:"evolution",patientId:patient.id,patient:patient.name,note:note.trim(),complaint:complaint.trim(),diagnosis:diagnosis.trim(),date:today(),isLocked:false});setNote("");};
  const saveAnamnesis=async()=>{if(!patient)return;setSaving(true);const existing=data.records.find(r=>r.kind==="anamnesis"&&r.patientId===patient.id),payload={kind:"anamnesis",clinicId:userId,uid,patientId:patient.id,patient:patient.name,data:{...(existing?.data||{}),...anam},date:today(),isLocked:false};if(existing)await update("records",existing.id,payload);else await write("records",payload);setSaving(false)};
  useEffect(()=>{setLocalAttachments([]);setAttachmentStatus("");setSelectedFile(null);setSelectedPreview(null);setUploadProgress(0);},[patient?.id]);
  const storedAttachments=data.records.filter(r=>r.kind==="attachment"&&String(r.patientId)===String(patient?.id));
  const attachments=[...storedAttachments,...localAttachments.filter(local=>!storedAttachments.some(stored=>stored.id===local.id))].sort((a,b)=>String(b.date||"").localeCompare(String(a.date||"")));
+  const radiographAttachments=attachments.filter(a=>{const text=`${a.category||""} ${a.name||""} ${a.fileName||""}`.toLowerCase();return a.mimeType?.startsWith("image/")&&(/radiograf|raio[- ]?x|rx|panor|periap|bite.?wing|cefal/.test(text));});
 
  useEffect(()=>{
   let active=true;
@@ -635,25 +852,11 @@ const cycleInfant = t => {
  };
 
  const history=data.records.filter(r=>r.patientId===patient?.id&&r.kind!=="odontogram"&&r.kind!=="anamnesis"&&r.kind!=="attachment").sort((a,b)=>String(b.date||"").localeCompare(String(a.date||"")));
- const Tooth = ({ n }) => {
-  const status = statuses.find(x => x.key === (toothStates[n] || "healthy")) || statuses[0];
-  return (
-    <button title={`Dente ${n} — ${status.label}`} className={`tooth ${status.className}`} onClick={() => cycleTooth(n)}>
-      <span className="toothShape"><i>{status.symbol}</i></span>
-      <b>{n}</b>
-    </button>
-  );
-};
-
-const InfantTooth = ({ n }) => {
-  const status = statuses.find(x => x.key === (infantToothStates[n] || "healthy")) || statuses[0];
-  return (
-    <button title={`Dente ${n} — ${status.label}`} className={`tooth ${status.className}`} onClick={() => cycleInfant(n)}>
-      <span className="toothShape"><i>{status.symbol}</i></span>
-      <b>{n}</b>
-    </button>
-  );
-};
+ const Tooth = ({ n, arch="upper", index=0, total=16 }) => {
+  const stateMap=isChildPatient?infantToothStates:toothStates;
+  const status=statuses.find(x=>x.key===(stateMap[n]||"healthy"))||statuses[0];
+  return <button title={`Dente ${n} — ${status.label}`} className={`tooth mouthTooth ${status.className} ${arch}`} onClick={()=>isChildPatient?cycleInfant(n):cycleTooth(n)}><span className="toothShape"><i>{status.symbol}</i></span><b>{n}</b></button>;
+ };
  const initials=patient?.name?.split(" ").map(x=>x[0]).slice(0,2).join("")||"";
  return <div className="recordLayout">
    <section className="panel recordPatients"><div className="recordHeader"><div><h3>Pacientes</h3><small>{data.patients.length} prontuários</small></div></div>{data.patients.map(p=><button className={`patientCard ${patient?.id===p.id?"selected":""}`} key={p.id} onClick={()=>{setPatient(p);setTab("overview")}}><div className="avatar">{p.name.split(" ").map(x=>x[0]).slice(0,2).join("")}</div><div><b>{p.name}</b><small>{p.phone||"Sem telefone"}</small></div></button>)}</section>
@@ -661,41 +864,10 @@ const InfantTooth = ({ n }) => {
    {!patient?<Empty text="Selecione um paciente para abrir a ficha completa."/>:<>
      <div className="recordTabs"><button className={tab==="overview"?"active":""} onClick={()=>setTab("overview")}><UserRound size={15}/> Ficha</button><button className={tab==="anamnesis"?"active":""} onClick={()=>setTab("anamnesis")}><HeartPulse size={15}/> Anamnese</button><button className={tab==="attachments"?"active":""} onClick={()=>setTab("attachments")}><Paperclip size={15}/> Anexos <span className="tabCount">{attachments.length}</span></button><button className={tab==="odontogram"?"active":""} onClick={()=>setTab("odontogram")}>🦷 Odontograma</button><button className={tab==="evolution"?"active":""} onClick={()=>setTab("evolution")}>📋 Evoluções</button><button className={tab==="history"?"active":""} onClick={()=>setTab("history")}>🕘 Histórico</button></div>
      {tab==="overview"&&<div className="patientOverview"><div className="infoCards"><div><span>Telefone</span><b>{patient.phone||"Não informado"}</b></div><div><span>E-mail</span><b>{patient.email||"Não informado"}</b></div><div><span>Nascimento</span><b>{patient.birth?new Date(patient.birth+"T12:00:00").toLocaleDateString("pt-BR"):"Não informado"}</b></div><div><span>Status</span><b>Ativo</b></div></div><div className="sectionTitle"><div><h4>Resumo clínico</h4><small>Informações importantes para o atendimento</small></div><button className="secondary" onClick={()=>setTab("anamnesis")}><HeartPulse size={16}/> Abrir anamnese</button></div><div className="clinicalHighlights"><div><HeartPulse/><span>Alergias</span><b>{anam.allergies||"Não informado"}</b></div><div><ClipboardList/><span>Medicamentos</span><b>{anam.medications||"Não informado"}</b></div><div><FileCheck/><span>Condições relevantes</span><b>{anam.conditions||"Não informado"}</b></div><div><Paperclip/><span>Documentos</span><b>{attachments.length} anexos</b></div></div></div>}
-    {tab==="anamnesis"&&<AnamnesisForm anam={anam} setAnam={setAnam} patient={patient} saving={saving} save={saveAnamnesis}/>} 
-    {tab==="attachments"&&<div className="attachmentsPanel"><div className="sectionTitle"><div><h4>Documentos e arquivos do paciente</h4><small>Radiografias, fotos, atestados, contratos, termos e outros anexos.</small></div></div><div className="uploadBox"><div className="uploadIcon">{selectedPreview?<img src={selectedPreview} alt="Prévia" style={{width:"100%",height:"100%",objectFit:"cover",borderRadius:"11px"}}/>:<Paperclip/>}</div><div><b>{selectedFile?`Arquivo: ${selectedFile.name}`:"Adicionar um novo arquivo"}</b><small>{selectedFile?`${formatFileSize(selectedFile.size)} • Pronto para envio`:"Até 15 MB por arquivo. Imagens, PDF e documentos são aceitos."}</small></div><div className="uploadFields"><Input label="Nome do arquivo" v={attach.name} set={v=>setAttach({...attach,name:v})}/><label>Categoria<select value={attach.category} onChange={e=>setAttach({...attach,category:e.target.value})}>{ATTACHMENT_CATEGORIES.map(c=><option key={c} value={c}>{c}</option>)}</select></label><Input label="Observação" v={attach.description} set={v=>setAttach({...attach,description:v})}/></div>{!selectedFile?<label className="fileButton primary"><Plus size={17}/> Selecionar arquivo<input type="file" onChange={onFileSelect} accept="image/*,.pdf,.doc,.docx,.xls,.xlsx,.txt" hidden/></label>:<div style={{display:"flex",gap:"8px",alignItems:"center"}}><button type="button" className="secondary" onClick={cancelSelectedFile} disabled={saving} title="Cancelar seleção"><X size={15}/></button><button type="button" className="primary fileButton" onClick={executeUpload} disabled={saving}><Plus size={17}/> {saving?(uploadProgress?`Enviando (${uploadProgress}%)...`:"Enviando..."):"Enviar arquivo"}</button></div>}{attachmentStatus&&<small className="attachmentStatus">{attachmentStatus}</small>}{saving&&uploadProgress>0&&<div style={{gridColumn:"1/-1",height:"4px",background:"#edf0f5",borderRadius:"99px",overflow:"hidden",marginTop:"2px"}}><div style={{width:`${uploadProgress}%`,height:"100%",background:"#2563eb",transition:"width 0.2s ease"}}/></div>}</div><div className="attachmentList">{attachments.length?attachments.map(a=>{const url=signedUrls[a.storagePath]||a.url;const isImg=a.mimeType?.startsWith("image/")||/\.(jpg|jpeg|png|webp|tif|tiff|bmp|svg)$/i.test(a.fileName||a.name||"");return <div className="attachmentCard" key={a.id}><div className="attachmentIcon" onClick={()=>isImg&&openViewer(a)} style={{cursor:isImg?"pointer":"default"}}>{isImg&&url?<img src={url} alt={a.name} style={{width:"100%",height:"100%",objectFit:"cover",borderRadius:"10px"}}/>:isImg?<ImageIcon/>:<FileText/>}</div><div className="attachmentInfo"><b>{a.name}</b><small>{a.category} • {a.date||"Sem data"} • {a.fileName} {a.size?`• ${formatFileSize(a.size)}`:""}</small>{a.description&&<p>{a.description}</p>}</div><div className="attachmentActions"><button type="button" className="iconBtn" onClick={()=>openViewer(a)} title="Visualizar"><Eye size={17}/></button><button type="button" className="iconBtn" onClick={()=>handleDownload(a)} title="Baixar"><Download size={17}/></button><button type="button" className="iconBtn dangerBtn" onClick={()=>delAttachment(a)} title="Excluir"><Trash2 size={17}/></button></div></div>}):<Empty text="Nenhum arquivo anexado a este paciente."/>}</div></div>}
+    {tab==="anamnesis"&&<AnamnesisForm anam={anam} setAnam={setAnam} patient={patient} saving={saving} save={saveAnamnesis} toothDetails={toothDetails} radiographAttachments={radiographAttachments}/>} 
+    {tab==="attachments"&&<div className="attachmentsPanel"><div className="sectionTitle"><div><h4>Documentos e arquivos do paciente</h4><small>Radiografias, fotos, atestados, contratos, termos e outros anexos.</small></div>{radiographAttachments.length>0&&<button className="secondary" type="button" onClick={()=>{setTab("anamnesis")}}><Sparkles size={15}/> Levar RX para Orvitta AI</button>}</div><div className="uploadBox"><div className="uploadIcon">{selectedPreview?<img src={selectedPreview} alt="Prévia" style={{width:"100%",height:"100%",objectFit:"cover",borderRadius:"11px"}}/>:<Paperclip/>}</div><div><b>{selectedFile?`Arquivo: ${selectedFile.name}`:"Adicionar um novo arquivo"}</b><small>{selectedFile?`${formatFileSize(selectedFile.size)} • Pronto para envio`:"Até 15 MB por arquivo. Imagens, PDF e documentos são aceitos."}</small></div><div className="uploadFields"><Input label="Nome do arquivo" v={attach.name} set={v=>setAttach({...attach,name:v})}/><label>Categoria<select value={attach.category} onChange={e=>setAttach({...attach,category:e.target.value})}>{ATTACHMENT_CATEGORIES.map(c=><option key={c} value={c}>{c}</option>)}</select></label><Input label="Observação" v={attach.description} set={v=>setAttach({...attach,description:v})}/></div>{!selectedFile?<label className="fileButton primary"><Plus size={17}/> Selecionar arquivo<input type="file" onChange={onFileSelect} accept="image/*,.pdf,.doc,.docx,.xls,.xlsx,.txt" hidden/></label>:<div style={{display:"flex",gap:"8px",alignItems:"center"}}><button type="button" className="secondary" onClick={cancelSelectedFile} disabled={saving} title="Cancelar seleção"><X size={15}/></button><button type="button" className="primary fileButton" onClick={executeUpload} disabled={saving}><Plus size={17}/> {saving?(uploadProgress?`Enviando (${uploadProgress}%)...`:"Enviando..."):"Enviar arquivo"}</button></div>}{attachmentStatus&&<small className="attachmentStatus">{attachmentStatus}</small>}{saving&&uploadProgress>0&&<div style={{gridColumn:"1/-1",height:"4px",background:"#edf0f5",borderRadius:"99px",overflow:"hidden",marginTop:"2px"}}><div style={{width:`${uploadProgress}%`,height:"100%",background:"#2563eb",transition:"width 0.2s ease"}}/></div>}</div><div className="attachmentList">{attachments.length?attachments.map(a=>{const url=signedUrls[a.storagePath]||a.url;const isImg=a.mimeType?.startsWith("image/")||/\.(jpg|jpeg|png|webp|tif|tiff|bmp|svg)$/i.test(a.fileName||a.name||"");return <div className="attachmentCard" key={a.id}><div className="attachmentIcon" onClick={()=>isImg&&openViewer(a)} style={{cursor:isImg?"pointer":"default"}}>{isImg&&url?<img src={url} alt={a.name} style={{width:"100%",height:"100%",objectFit:"cover",borderRadius:"10px"}}/>:isImg?<ImageIcon/>:<FileText/>}</div><div className="attachmentInfo"><b>{a.name}</b><small>{a.category} • {a.date||"Sem data"} • {a.fileName} {a.size?`• ${formatFileSize(a.size)}`:""}</small>{a.description&&<p>{a.description}</p>}</div><div className="attachmentActions"><button type="button" className="iconBtn" onClick={()=>openViewer(a)} title="Visualizar"><Eye size={17}/></button><button type="button" className="iconBtn" onClick={()=>handleDownload(a)} title="Baixar"><Download size={17}/></button><button type="button" className="iconBtn dangerBtn" onClick={()=>delAttachment(a)} title="Excluir"><Trash2 size={17}/></button></div></div>}):<Empty text="Nenhum arquivo anexado a este paciente."/>}</div></div>}
      {tab==="odontogram" && (
-  <div className="odontogramWrap">
-    <div className="odontoToolbar">
-      <div>
-        <b>Odontograma</b>
-        <small>Dentição mista • 32 permanentes + 20 decíduos</small>
-      </div>
-      <button className="primary" onClick={saveOdontogram} disabled={saving}>
-        <CheckCircle size={17}/> {saving?"Salvando...":"Salvar odontograma"}
-      </button>
-    </div>
-    <div className="odontoLegend">
-      {statuses.map(x => (
-        <span key={x.key}><i className={`legendDot ${x.className}`}></i>{x.label}</span>
-      ))}
-    </div>
-    <div className="jaw">
-      <div className="jawLabel">MAXILA</div>
-      <div className="groupLabel">PERMANENTES</div>
-      <div className="teethRow">{permanentUpper.map(n => <Tooth key={n} n={n} />)}</div>
-      <div className="groupLabel">DECÍDUOS</div>
-      <div className="teethRow infantRow">{[...infantUpperRight, ...infantUpperLeft].map(n => <InfantTooth key={n} n={n} />)}</div>
-      <div className="midline"></div>
-      <div className="jawLabel">MANDÍBULA</div>
-      <div className="groupLabel">PERMANENTES</div>
-      <div className="teethRow">{permanentLower.map(n => <Tooth key={n} n={n} />)}</div>
-      <div className="groupLabel">DECÍDUOS</div>
-      <div className="teethRow infantRow">{[...infantLowerLeft, ...infantLowerRight].map(n => <InfantTooth key={n} n={n} />)}</div>
-    </div>
-    <div className="odontoSummary">
-      <b>Resumo:</b> {Object.values(toothStates).filter(x=>x==="caries").length} cáries • {Object.values(toothStates).filter(x=>x==="restored").length} restaurados • {Object.values(toothStates).filter(x=>x==="planned").length} planejados • {Object.values(toothStates).filter(x=>x==="missing").length} ausentes
-    </div>
-  </div>
+  <div className="odontogramWrap"><div className="odontoToolbar"><div><b>Odontograma</b><small>{isChildPatient?`Dentição infantil • ${allTeeth.length} dentes`:'Dentição permanente • 32 dentes'} • clique no dente para registrar condição</small></div><button className="primary" onClick={saveOdontogram} disabled={saving}><CheckCircle size={17}/> {saving?'Salvando...':'Salvar odontograma'}</button></div><div className="odontoLegend">{statuses.map(x=><span key={x.key}><i className={`legendDot ${x.className}`}></i>{x.label}</span>)}</div><div className="mouthDiagram"><div className="mouthLabel top">ARCADA SUPERIOR</div><div className="toothArch upperArch">{upperTeeth.map((n,i)=><Tooth key={n} n={n} arch="upper" index={i} total={upperTeeth.length}/>)}</div><div className="mouthCenter"><span>PALATO</span><i></i></div><div className="toothArch lowerArch">{lowerTeeth.map((n,i)=><Tooth key={n} n={n} arch="lower" index={i} total={lowerTeeth.length}/>)}</div><div className="mouthLabel bottom">ARCADA INFERIOR</div></div><div className="odontoSummary"><b>Resumo:</b> {Object.values(isChildPatient?infantToothStates:toothStates).filter(x=>x==='caries').length} cáries • {Object.values(isChildPatient?infantToothStates:toothStates).filter(x=>x==='restored').length} restaurados • {Object.values(isChildPatient?infantToothStates:toothStates).filter(x=>x==='fracture').length} fraturas • {Object.values(isChildPatient?infantToothStates:toothStates).filter(x=>x==='missing').length} ausentes</div><section className="toothClinicalEditor"><div className="sectionTitle"><div><h4>Detalhamento clínico por dente</h4><small>Registre o achado, diagnóstico e conduta. A Orvitta AI usa esses dados no plano.</small></div></div><div className="toothClinicalHeader"><span>Dente</span><span>Achado / condição</span><span>Diagnóstico / hipótese</span><span>Conduta / tratamento</span></div><div className="toothClinicalList">{allTeeth.map(n=>{const d=toothDetails[n]||{};const stateMap=isChildPatient?infantToothStates:toothStates;const toothStatus=(statuses.find(x=>x.key===(stateMap[n]||'healthy'))||statuses[0]);return <div className="toothClinicalRow" key={n}><div className="toothClinicalNumber"><b>{n}</b><span className={`miniStatus ${toothStatus.className}`}>{toothStatus.label}</span></div><input value={d.findings||''} onChange={e=>updateToothDetail(n,'findings',e.target.value)} placeholder="O que você encontrou?"/><input value={d.diagnosis||''} onChange={e=>updateToothDetail(n,'diagnosis',e.target.value)} placeholder="Diagnóstico / hipótese"/><input value={d.treatment||''} onChange={e=>updateToothDetail(n,'treatment',e.target.value)} placeholder="Conduta / tratamento"/></div>})}</div><div className="toothClinicalFooter"><Sparkles size={15}/><span>Preencha apenas os dentes relevantes e depois converse com a <b>Orvitta AI</b>.</span></div></section></div>
 )}
      {tab==="evolution"&&<div className="evolutionPanel"><div className="clinicalGrid"><label>Queixa principal<textarea value={complaint} onChange={e=>setComplaint(e.target.value)} placeholder="O que trouxe o paciente à consulta?"/></label><label>Diagnóstico / hipótese<textarea value={diagnosis} onChange={e=>setDiagnosis(e.target.value)} placeholder="Diagnóstico ou hipótese clínica..."/></label></div><label>Evolução clínica<textarea value={note} onChange={e=>setNote(e.target.value)} placeholder="Descreva a evolução, procedimentos realizados, orientações e observações..."/></label><button className="primary" onClick={saveEvolution}><CheckCircle size={17}/> Salvar evolução</button></div>}
      {tab==="history"&&<div className="recordList">{history.length?history.map(r=><div className="recordNote" key={r.id}><FileText/><div><b>{r.date||"Sem data"}</b>{r.complaint&&<p><strong>Queixa:</strong> {r.complaint}</p>}{r.diagnosis&&<p><strong>Diagnóstico:</strong> {r.diagnosis}</p>}{r.note&&<p>{r.note}</p>}</div></div>):<Empty text="Nenhuma evolução registrada para este paciente."/>}</div>}
