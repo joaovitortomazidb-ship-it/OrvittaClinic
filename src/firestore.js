@@ -72,13 +72,13 @@ export async function bootstrapClinic(
       clinicId,
       status: "Ativo",
       permissions: [
-        "patients.view","patients.create","patients.edit","patients.delete",
-        "appointments.view","appointments.create","appointments.edit","appointments.confirm","appointments.cancel","appointments.delete",
-        "records.view","records.create","records.edit","records.delete",
-        "finances.view","finances.create","finances.edit","finances.payments",
-        "stock.view","stock.create","stock.edit","stock.delete","stock.in","stock.out",
-        "professionals.view","professionals.create","professionals.edit","professionals.block","professionals.delete",
-        "reports.view","settings.view","settings.edit"
+        "patients.view", "patients.create", "patients.edit", "patients.delete",
+        "appointments.view", "appointments.create", "appointments.edit", "appointments.confirm", "appointments.cancel", "appointments.delete",
+        "records.view", "records.create", "records.edit", "records.delete",
+        "finances.view", "finances.create", "finances.edit", "finances.payments",
+        "stock.view", "stock.create", "stock.edit", "stock.delete", "stock.in", "stock.out",
+        "professionals.view", "professionals.create", "professionals.edit", "professionals.block", "professionals.delete",
+        "reports.view", "settings.view", "settings.edit"
       ],
       phone: profile.phone || "",
       createdAt: serverTimestamp(),
@@ -99,9 +99,9 @@ export async function getClinic(clinicId) {
 
   return snap.exists()
     ? {
-        id: snap.id,
-        ...snap.data()
-      }
+      id: snap.id,
+      ...snap.data()
+    }
     : null;
 }
 
@@ -188,9 +188,9 @@ export async function getClinicMember(
 
   return snap.exists()
     ? {
-        id: snap.id,
-        ...snap.data()
-      }
+      id: snap.id,
+      ...snap.data()
+    }
     : null;
 }
 
@@ -236,7 +236,7 @@ export function subscribeCollection(
   onError
 ) {
   if (!clinicId || !collectionName) {
-    return () => {};
+    return () => { };
   }
 
   const collectionRef = collection(

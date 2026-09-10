@@ -1,5 +1,5 @@
-import React,{useEffect,useMemo,useState} from "react";
-import {LayoutDashboard,Users,CalendarDays,FileText,DollarSign,Package,UserCog,BarChart3,Settings,Search,Plus,Trash2,CheckCircle,Clock,Stethoscope,Menu,LogOut,RefreshCw,ShieldCheck,ArrowDownToLine,ArrowUpFromLine,AlertTriangle,Pencil,Boxes,Paperclip,UserRound,HeartPulse,Image as ImageIcon,FileCheck,Download,Eye,ClipboardList,EyeOff,ChevronLeft,ChevronRight,UserPlus,X,MessageCircle,ZoomIn,ZoomOut,ExternalLink} from "lucide-react";
+import React,{useEffect,useMemo,useRef,useState} from "react";
+import {LayoutDashboard,Users,CalendarDays,FileText,DollarSign,Package,UserCog,BarChart3,Settings,Search,Plus,Trash2,CheckCircle,Clock,Stethoscope,Menu,LogOut,RefreshCw,ShieldCheck,ArrowDownToLine,ArrowUpFromLine,AlertTriangle,Pencil,Boxes,Paperclip,UserRound,HeartPulse,Image as ImageIcon,FileCheck,Download,Eye,ClipboardList,EyeOff,ChevronLeft,ChevronRight,UserPlus,X,MessageCircle,ZoomIn,ZoomOut,ExternalLink,ChevronDown,Palette,Sparkles,SlidersHorizontal,Command as CommandIcon,Check} from "lucide-react";
 import { observeAuth, login, register, resetPassword, logout } from "./auth";
 import { firebaseEnabled, storage, db } from "./firebase";
 import { collectionGroup, getDocs, query, where } from "firebase/firestore";
@@ -21,8 +21,8 @@ import {
 import { seed, today, money } from "./data";
 import "./styles.css";
 // APK download configuration
-const APK_DOWNLOAD_URL = "https://github.com/joaovitortomazidb-ship-it/OrvittaClinic/releases/download/v1.0.0/orvittaclinic.apk";
-const APK_VERSION = "1.0.0";
+const APK_DOWNLOAD_URL = "https://github.com/joaovitortomazidb-ship-it/OrvittaClinic/releases/download/v1.0.1/app-debug.apk";
+const APK_VERSION = "1.0.1";
 
 function AuthScreen(){
   const [mode,setMode]=useState("login"),[clinic,setClinic]=useState(""),[name,setName]=useState(""),[phone,setPhone]=useState(""),[email,setEmail]=useState(""),[password,setPassword]=useState(""),[confirmPassword,setConfirmPassword]=useState(""),[error,setError]=useState(""),[busy,setBusy]=useState(false),[showPassword,setShowPassword]=useState(false),[showConfirmPassword,setShowConfirmPassword]=useState(false);
@@ -65,6 +65,9 @@ const clinicalAlertOptions=[
  {key:"respiratoryDisease",label:"Doença respiratória"},{key:"bruxism",label:"Bruxismo"},{key:"specialAttention",label:"Necessidade de atenção especial"},{key:"other",label:"Outro"}
 ];
 const anamnesisDefaults={bloodType:"",allergies:"",medications:"",conditions:"",surgeries:"",pregnancy:"",smoking:"",alcohol:"",bruxism:"",hygiene:"",lastDentist:"",previousTreatments:"",familyHistory:"",notes:"",anamnesisType:"",alerts:[],alertDetails:{},child:{},young:{},adult:{},elderly:{}};
+const DEFAULT_PREFERENCES={accent:"#2563eb",density:"comfortable",animations:true,startPage:"Agenda",agendaView:"day"};
+const ACCENT_PRESETS=[{name:"Ocean",value:"#2563eb"},{name:"Violeta",value:"#7c3aed"},{name:"Turquesa",value:"#0f766e"},{name:"Coral",value:"#ea580c"},{name:"Rosa",value:"#db2777"}];
+
 function patientAge(birth){if(!birth)return null;const date=new Date(`${birth}T12:00:00`);if(Number.isNaN(date.getTime()))return null;const now=new Date();let age=now.getFullYear()-date.getFullYear();if(now.getMonth()<date.getMonth()||(now.getMonth()===date.getMonth()&&now.getDate()<date.getDate()))age--;return age>=0?age:null}
 function suggestedAnamnesisType(birth){const age=patientAge(birth);if(age===null)return "adult";if(age<=12)return "child";if(age<=17)return "young";if(age>=60)return "elderly";return "adult"}
 function getAnamnesis(data,patientId){return data.records.find(record=>record.kind==="anamnesis"&&String(record.patientId)===String(patientId))?.data||anamnesisDefaults}
@@ -117,7 +120,8 @@ async function resolveClinicAccess(user){
 
 function App(){
  const emptyData={patients:[],appointments:[],finances:[],stock:[],professionals:[],records:[]};
- const [user,setUser]=useState(undefined),[clinic,setClinic]=useState(null),[clinicId,setClinicId]=useState(null),[role,setRole]=useState(null),[member,setMember]=useState(null),[data,setData]=useState(firebaseEnabled?emptyData:seed),[page,setPage]=useState("Agenda"),[search,setSearch]=useState(""),[mobile,setMobile]=useState(false),[error,setError]=useState(""),[accessLoading,setAccessLoading]=useState(false),[selectedPatientId,setSelectedPatientId]=useState(null);
+ const [user,setUser]=useState(undefined),[clinic,setClinic]=useState(null),[clinicId,setClinicId]=useState(null),[role,setRole]=useState(null),[member,setMember]=useState(null),[data,setData]=useState(firebaseEnabled?emptyData:seed),[page,setPage]=useState("Agenda"),[search,setSearch]=useState(""),[mobile,setMobile]=useState(false),[error,setError]=useState(""),[accessLoading,setAccessLoading]=useState(false),[selectedPatientId,setSelectedPatientId]=useState(null),[moreOpen,setMoreOpen]=useState(false),[appMenuOpen,setAppMenuOpen]=useState(false),[globalSearchOpen,setGlobalSearchOpen]=useState(false),[preferences,setPreferences]=useState(DEFAULT_PREFERENCES);
+ const globalSearchRef=useRef(null);
  useEffect(()=>observeAuth(setUser),[]);
 
  useEffect(()=>{
@@ -173,8 +177,35 @@ function App(){
      if(x)setData(JSON.parse(x));
    }
  },[]);
- useEffect(()=>{if(!firebaseEnabled)localStorage.setItem("odontoflow_data",JSON.stringify(data));},[data]);
+ useEffect(()=>{
+   if(!clinicId)return;
+   let local={};
+   try{local=JSON.parse(localStorage.getItem("orvitta_preferences")||"{}");}catch{}
+   const saved=clinic?.preferences||{};
+   // Load once per clinic. Do not rehydrate on every clinic object update,
+   // otherwise a successful save can be immediately overwritten by a stale snapshot.
+   setPreferences({...DEFAULT_PREFERENCES,...(firebaseEnabled?saved:local)});
+ },[clinicId]);
+ useEffect(()=>{if(!firebaseEnabled)localStorage.setItem("orvitta_preferences",JSON.stringify(preferences));},[preferences]);
+ useEffect(()=>{if(clinicId&&preferences.startPage)setPage(preferences.startPage)},[clinicId]);
+ useEffect(()=>{
+       const onKeyDown=e=>{
+     const tag=(e.target?.tagName||"").toLowerCase();
+     const typing=tag==="input"||tag==="textarea"||tag==="select"||e.target?.isContentEditable;
+     if((e.ctrlKey||e.metaKey)&&e.key.toLowerCase()==="k"){e.preventDefault();setGlobalSearchOpen(true);setTimeout(()=>globalSearchRef.current?.focus(),0);return;}
+     if(e.key==="Escape"){setGlobalSearchOpen(false);setMoreOpen(false);setAppMenuOpen(false);setMobile(false);return;}
+     if(!typing&&e.key.toLowerCase()==="n"&&page==="Agenda"&&can?.("Agenda","appointments.create")){window.dispatchEvent(new Event("newItem"));}
+   };
+   window.addEventListener("keydown",onKeyDown);return()=>window.removeEventListener("keydown",onKeyDown);
+ },[page]);
 
+ const globalResults=useMemo(()=>{
+   const q=search.trim().toLowerCase();
+   if(!q)return [];
+   const patients=data.patients.filter(p=>`${p.name||""} ${p.phone||""} ${p.email||""}`.toLowerCase().includes(q)).slice(0,5).map(p=>({kind:"patient",id:p.id,title:p.name||"Paciente",meta:p.phone||p.email||"Paciente",icon:Users}));
+   const appointments=data.appointments.filter(a=>`${a.patient||""} ${a.professional||""} ${a.type||""}`.toLowerCase().includes(q)).slice(0,4).map(a=>({kind:"appointment",id:a.id,title:a.patient||"Consulta",meta:`${a.date||""} • ${a.startTime||a.time||""} • ${a.professional||"Sem profissional"}`,icon:CalendarDays}));
+   return [...patients,...appointments].slice(0,8);
+ },[search,data.patients,data.appointments]);
  if(user===undefined) return <div className="loading"><RefreshCw className="spin"/> Carregando...</div>;
  if(!user) return <AuthScreen/>;
  if(firebaseEnabled&&!clinicId&&accessLoading) return <div className="loading"><RefreshCw className="spin"/> Identificando sua clínica...</div>;
@@ -205,27 +236,114 @@ function App(){
    if(firebaseEnabled) await removeItem(clinicId,collectionName,id);
    else setData(d=>({...d,[collectionName]:d[collectionName].filter(x=>x.id!==id)}));
  };
+ const openGlobalResult=result=>{
+   setGlobalSearchOpen(false);setSearch("");
+   if(result.kind==="patient"){setSelectedPatientId(result.id);setPage("Prontuários");}
+   else{setPage("Agenda");}
+ };
+
  const content={
   Dashboard:<Dashboard data={data}/>,
   Pacientes:<Patients data={data} search={search} write={write} remove={remove} can={can} onOpenRecord={id=>{setSelectedPatientId(id);setPage("Prontuários")}}/>,
-  Agenda:<Agenda data={data} write={write} update={update} remove={remove} can={can} onOpenRecord={id=>{setSelectedPatientId(id);setPage("Prontuários")}}/>,
+  Agenda:<Agenda data={data} preferences={preferences} write={write} update={update} remove={remove} can={can} onOpenRecord={id=>{setSelectedPatientId(id);setPage("Prontuários")}}/>,
   Prontuários:<Records data={data} write={write} update={update} remove={remove} userId={clinicId} uid={user.uid} initialPatientId={selectedPatientId} can={can}/>,
   Financeiro:<Finance data={data} update={update} write={write} can={can}/>,
   Estoque:<Stock data={data} update={update} write={write} remove={remove} can={can}/>,
-  Profissionais:<ProfessionalManager data={data} write={write} clinicId={clinicId} role={role}/>,
+  Profissionais:<ProfessionalManager data={data} write={write} remove={remove} clinicId={clinicId} role={role}/>,
   Relatórios:<Reports data={data}/>,
-  Configurações:<SettingsPage clinic={clinic} save={async x=>{if(firebaseEnabled)await saveClinic(clinicId,x);setClinic(c=>({...c,...x}))}}/>
+  Configurações:<SettingsPage clinic={clinic} preferences={preferences} save={async x=>{
+    const nextPrefs={...DEFAULT_PREFERENCES,...(x.preferences||{})};
+    // Apply immediately to the running UI. The remote save happens next.
+    setPreferences(nextPrefs);
+    try{
+      if(firebaseEnabled){
+        await saveClinic(clinicId,{...x,preferences:nextPrefs});
+      }else{
+        localStorage.setItem("orvitta_preferences",JSON.stringify(nextPrefs));
+      }
+      setClinic(c=>({...c,...x,preferences:nextPrefs}));
+      return true;
+    }catch(error){
+      throw error;
+    }
+  }}/>
  }[page];
 
- return <div className="app">
-  <aside className={"sidebar "+(mobile?"show":"")}><div className="brand"><Stethoscope/><b>Orvitta <span>Clinic</span></b></div>
-   {nav.map(([n,I])=><button className={page===n?"nav active":"nav"} onClick={()=>{setPage(n);setMobile(false)}} key={n}><I size={19}/>{n}</button>)}
-   <div className="clinic"><div className="avatar">OF</div><div><b>{clinic?.name||"Minha Clínica"}</b><small>{user.email}</small><small>{role==="owner"?"Administrador":"Funcionário"}</small></div></div>
-   <button className="nav logout" onClick={logout}><LogOut size={19}/>Sair</button>
-  </aside>
-  <main><header><button className="mobileBtn" onClick={()=>setMobile(!mobile)}><Menu/></button><div className="search"><Search size={18}/><input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Pesquisar pacientes, consultas..."/></div><div className="headerUser"><div className="avatar">{(user.email||"OF").slice(0,2).toUpperCase()}</div><span>{role==="owner"?"Administrador":member?.name||"Funcionário"}</span></div></header>
+ return <div className={`app density-${preferences.density} ${preferences.animations===false?"noAnimations":""}`} style={{"--user-accent":preferences.accent,"--primary":preferences.accent,"--primary-2":preferences.accent,"--primary-soft":"color-mix(in srgb, "+preferences.accent+" 10%, white)"}}>
+  <header className="topbar">
+   <div className="topbarInner">
+    <button className="topbarBrand" onClick={()=>setPage("Dashboard")} aria-label="Ir para Dashboard">
+      <span className="brandMark"><Stethoscope size={20}/></span>
+      <span className="brandText"><strong>Orvitta</strong><span>Clinic</span></span>
+    </button>
+
+    <nav className="topnav" aria-label="Navegação principal">
+      {nav.slice(0,6).map(([n,I])=>
+        <button key={n} className={page===n?"topnavItem active":"topnavItem"} onClick={()=>{setPage(n);setMoreOpen(false)}}>
+          <I size={17}/><span>{n}</span>
+        </button>
+      )}
+      {nav.length>6&&<div className="topnavMenu">
+        <button className={moreOpen?"topnavItem active":"topnavItem"} onClick={()=>setMoreOpen(v=>!v)} aria-expanded={moreOpen}>
+          <span>Mais</span><ChevronDown size={15}/>
+        </button>
+        {moreOpen&&<div className="dropdownMenu">
+          {nav.slice(6).map(([n,I])=>
+            <button key={n} className={page===n?"dropdownItem active":"dropdownItem"} onClick={()=>{setPage(n);setMoreOpen(false)}}>
+              <I size={16}/><span>{n}</span>
+            </button>
+          )}
+        </div>}
+      </div>}
+    </nav>
+
+    <div className="topbarActions">
+      <div className={`globalSearchWrap ${globalSearchOpen?"open":""}`}>
+       <label className="globalSearch">
+        <Search size={17}/>
+        <input ref={globalSearchRef} aria-label="Pesquisar pacientes e consultas" value={search} onFocus={()=>setGlobalSearchOpen(true)} onChange={e=>{setSearch(e.target.value);setGlobalSearchOpen(true)}} placeholder="Pesquisar..."/>
+        <kbd><CommandIcon size={12}/>K</kbd>
+       </label>
+       {globalSearchOpen&&search.trim()&&<div className="globalSearchResults">
+         {globalResults.length?globalResults.map(result=>{const Icon=result.icon;return <button key={`${result.kind}-${result.id}`} className="globalResult" onMouseDown={e=>e.preventDefault()} onClick={()=>openGlobalResult(result)}><span className="globalResultIcon"><Icon size={16}/></span><span><b>{result.title}</b><small>{result.meta}</small></span><small>{result.kind==="patient"?"Abrir prontuário":"Ir para agenda"}</small></button>}):<div className="globalEmpty">Nenhum resultado encontrado.</div>}
+       </div>}
+      </div>
+      <div className="userChip">
+        <div className="avatar">{(user.email||"OF").slice(0,2).toUpperCase()}</div>
+        <div className="userChipText"><b>{role==="owner"?"Administrador":member?.name||"Funcionário"}</b><small>{clinic?.name||"Minha Clínica"}</small></div>
+      </div>
+      <div className="appMenuWrap">
+        <button type="button" className={`iconBtn appMenuTrigger ${appMenuOpen?"active":""}`} title="Configurações rápidas" aria-label="Abrir configurações rápidas" aria-expanded={appMenuOpen} onClick={e=>{e.stopPropagation();setAppMenuOpen(v=>!v);setMobile(false)}}><Settings size={18}/></button>
+        {appMenuOpen&&<div className="appQuickMenu">
+          <div className="appQuickMenuHead"><div className="quickGear"><Settings size={17}/></div><div><b>Preferências</b><small>Deixe o Orvitta com a sua cara</small></div></div>
+          <button type="button" className="appQuickItem" onClick={()=>{setPage("Configurações");setAppMenuOpen(false)}}><Palette size={17}/><span><b>Personalizar visual</b><small>Cor, densidade e animações</small></span><ChevronRight size={15}/></button>
+          <button type="button" className="appQuickItem" onClick={()=>{setPage("Configurações");setAppMenuOpen(false)}}><SlidersHorizontal size={17}/><span><b>Configurações do app</b><small>Preferências da clínica</small></span><ChevronRight size={15}/></button>
+        </div>}
+      </div>
+      <button className="iconBtn" title="Sair" onClick={logout}><LogOut size={18}/></button>
+    </div>
+   </div>
+
+   {mobile&&<div className="mobileNav">
+     {nav.map(([n,I])=><button key={n} className={page===n?"mobileNavItem active":"mobileNavItem"} onClick={()=>{setPage(n);setMobile(false)}}><I size={17}/>{n}</button>)}
+     <div className="mobileClinic"><div className="avatar">OF</div><div><b>{clinic?.name||"Minha Clínica"}</b><small>{user.email}</small></div></div>
+   </div>}
+  </header>
+
+  <main className="mainContent">
    {error&&<div className="globalError">{error}</div>}
-   <div className="page"><div className="pageTitle"><div><h1>{page}</h1><p>{page==="Dashboard"?"Visão geral da sua clínica":`Gerencie ${page.toLowerCase()} da clínica`}</p></div>{["Pacientes","Agenda","Financeiro","Estoque","Profissionais"].includes(page)&&<button className="primary" onClick={()=>window.dispatchEvent(new Event("newItem"))}><Plus size={18}/> Novo</button>}</div>{content}</div>
+   <div className="page">
+    <div className="pageTitle">
+      <div>
+        <span className="eyebrow">GESTÃO ODONTOLÓGICA</span>
+        <h1>{page}</h1>
+        <p>{page==="Dashboard"?"Visão geral da sua clínica":`Gerencie ${page.toLowerCase()} da clínica`}</p>
+      </div>
+      {["Pacientes","Agenda","Financeiro","Estoque","Profissionais"].includes(page)&&
+        <button className="primary" onClick={()=>window.dispatchEvent(new Event("newItem"))}><Plus size={18}/> Novo</button>}
+    </div>
+    {content}
+   </div>
   </main>
  </div>
 }
@@ -240,21 +358,24 @@ function Dashboard({data}){
 }
 function Card({icon:I,title,value,note}){return <div className="card"><div className="cardIcon"><I size={21}/></div><small>{title}</small><strong>{value}</strong><em>{note}</em></div>}
 function Patients({data,search,write,remove,can,onOpenRecord}){
- const [open,setOpen]=useState(false),[form,setForm]=useState({name:"",phone:"",email:"",birth:""});
+ const [open,setOpen]=useState(false),[form,setForm]=useState({name:"",phone:"",email:"",birth:""}),[deleting,setDeleting]=useState(null);
  useEffect(()=>{const h=()=>setOpen(true);window.addEventListener("newItem",h);return()=>window.removeEventListener("newItem",h)},[]);
- const list=data.patients.filter(p=>(p.name||"").toLowerCase().includes(search.toLowerCase()));
+ const list=data.patients.filter(p=>`${p.name||""} ${p.phone||""} ${p.email||""}`.toLowerCase().includes(search.toLowerCase()));
  const canSeeAlerts=can("Prontuários","records.view");
- const add=async()=>{if(!form.name)return;await write("patients",{...form,status:"Ativo"});setForm({name:"",phone:"",email:"",birth:""});setOpen(false)};
+ const add=async()=>{if(!form.name.trim())return;await write("patients",{...form,name:form.name.trim(),status:"Ativo"});setForm({name:"",phone:"",email:"",birth:""});setOpen(false)};
+ const askDelete=async p=>{if(!can("Pacientes","patients.delete")||deleting)return;const ok=window.confirm(`Excluir o paciente "${p.name}"?\n\nO cadastro será removido da lista de pacientes. Histórico clínico e agendamentos existentes não serão apagados automaticamente.`);if(!ok)return;setDeleting(p.id);try{await remove("patients",p.id);if(onOpenRecord){} }finally{setDeleting(null)}};
  return <section className="panel"><div className="toolbar"><div><h3>Pacientes cadastrados</h3><small>{list.length} pacientes</small></div>{can("Pacientes","patients.create")&&<button className="primary" onClick={()=>setOpen(true)}><Plus size={18}/> Novo paciente</button>}</div>
- <div className="table"><div className="tr th"><span>Paciente</span><span>Contato</span><span>Nascimento</span><span>Status</span><span></span></div>{list.map(p=>{const alerts=canSeeAlerts?patientAlerts(data,p.id):[];return <div className="tr patientRowClickable" key={p.id} onClick={()=>onOpenRecord?.(p.id)} title="Abrir ficha completa"><span><b>{p.name} {alerts.length>0&&<AlertIndicator alerts={alerts} important={hasImportantAlert(alerts)}/>}</b><small>Clique para abrir o prontuário completo</small></span><span>{p.phone||"—"}<small>{p.email||"—"}</small></span><span>{p.birth||"—"}</span><span><span className="badge ativo">Ativo</span></span><span>{can("Pacientes","patients.delete")&&<button className="iconBtn" onClick={e=>{e.stopPropagation();remove("patients",p.id)}}><Trash2 size={16}/></button>}</span></div>})}</div>
- {open&&<Modal title="Novo paciente" close={()=>setOpen(false)}><Input label="Nome completo" v={form.name} set={v=>setForm({...form,name:v})}/><Input label="Telefone" v={form.phone} set={v=>setForm({...form,phone:v})}/><Input label="E-mail" v={form.email} set={v=>setForm({...form,email:v})}/><Input label="Nascimento" type="date" v={form.birth} set={v=>setForm({...form,birth:v})}/><button className="primary full" onClick={add}>Cadastrar paciente</button></Modal>}</section>
+ <div className="table"><div className="tr th"><span>Paciente</span><span>Contato</span><span>Nascimento</span><span>Status</span><span>Ações</span></div>{list.map(p=>{const alerts=canSeeAlerts?patientAlerts(data,p.id):[];return <div className="tr patientRowClickable" key={p.id} onClick={()=>onOpenRecord?.(p.id)} title="Abrir ficha completa"><span><b>{p.name} {alerts.length>0&&<AlertIndicator alerts={alerts} important={hasImportantAlert(alerts)}/>}</b><small>Clique para abrir o prontuário completo</small></span><span>{p.phone||"—"}<small>{p.email||"—"}</small></span><span>{p.birth||"—"}</span><span><span className="badge ativo">Ativo</span></span><span className="patientActionsCell">{can("Pacientes","patients.delete")&&<button type="button" className="iconBtn dangerBtn" title="Excluir paciente" disabled={deleting===p.id} onClick={e=>{e.stopPropagation();askDelete(p)}}>{deleting===p.id?<RefreshCw size={16} className="spin"/>:<Trash2 size={16}/>}</button>}</span></div>})}</div>
+ {open&&<Modal title="Novo paciente" close={()=>setOpen(false)}><Input label="Nome completo" v={form.name} set={v=>setForm({...form,name:v})}/><Input label="Telefone" v={form.phone} set={v=>setForm({...form,phone:v})}/><Input label="E-mail" v={form.email} set={v=>setForm({...form,email:v})}/><Input label="Nascimento" type="date" v={form.birth} set={v=>setForm({...form,birth:v})}/><button className="primary full" onClick={add}>Cadastrar paciente</button></Modal>}
+ </section>
 }
 function AppointmentWhatsappButton({patient,appointment}){const href=appointmentWhatsappLink(patient,appointment);if(!href)return null;return <a className="secondary" href={href} target="_blank" rel="noreferrer" title="Abrir WhatsApp do paciente"><MessageCircle size={15}/> WhatsApp</a>}
-function Agenda({data,write,update,remove,can,onOpenRecord}){
- const [view,setView]=useState("day"),[selectedDate,setSelectedDate]=useState(today()),[professional,setProfessional]=useState("Todos"),[confirmationFilter,setConfirmationFilter]=useState("Todos"),[open,setOpen]=useState(false),[details,setDetails]=useState(null),[editing,setEditing]=useState(null);
+function Agenda({data,preferences,write,update,remove,can,onOpenRecord}){
+ const [view,setView]=useState(preferences?.agendaView||"day"),[selectedDate,setSelectedDate]=useState(today()),[professional,setProfessional]=useState("Todos"),[confirmationFilter,setConfirmationFilter]=useState("Todos"),[open,setOpen]=useState(false),[details,setDetails]=useState(null),[editing,setEditing]=useState(null),[patientSearch,setPatientSearch]=useState("");
+ useEffect(()=>{if(preferences?.agendaView)setView(preferences.agendaView)},[preferences?.agendaView]);
  const empty={patientId:"",patient:"",professional:"",date:selectedDate,startTime:"08:00",endTime:"09:00",type:"Avaliação",status:"Agendada",notes:""};
  const [form,setForm]=useState(empty);
- useEffect(()=>{const handler=()=>{setEditing(null);setForm({...empty,date:selectedDate});setOpen(true)};window.addEventListener("newItem",handler);return()=>window.removeEventListener("newItem",handler)},[selectedDate]);
+ useEffect(()=>{const handler=()=>{setEditing(null);setForm({...empty,date:selectedDate});setPatientSearch("");setOpen(true)};window.addEventListener("newItem",handler);return()=>window.removeEventListener("newItem",handler)},[selectedDate]);
  const dateValue=value=>new Date(`${value}T12:00:00`);
  const formatDate=value=>dateValue(value).toLocaleDateString("pt-BR",{weekday:"long",day:"2-digit",month:"long"});
  const shiftDate=(amount)=>{const next=dateValue(selectedDate);next.setDate(next.getDate()+amount);setSelectedDate(next.toISOString().slice(0,10))};
@@ -267,9 +388,9 @@ function Agenda({data,write,update,remove,can,onOpenRecord}){
  const professionalColor=appointment=>data.professionals.find(item=>item.name===appointment.professional)?.calendarColor||"#2563eb";
  const canSeeAlerts=can("Prontuários","records.view");
  const appointmentPatient=appointment=>data.patients.find(item=>String(item.id)===String(appointment?.patientId));
- const updatePatient=(patientId)=>{const patient=data.patients.find(item=>String(item.id)===String(patientId));setForm(value=>({...value,patientId,patient:patient?.name||""}))};
+ const updatePatient=(patientId)=>{const patient=data.patients.find(item=>String(item.id)===String(patientId));setForm(value=>({...value,patientId,patient:patient?.name||""}));setPatientSearch(patient?.name||"")};
  const save=async()=>{if(!form.patientId||!form.date||!form.startTime)return;const patient=data.patients.find(item=>String(item.id)===String(form.patientId));const payload={...form,patient:patient?.name||form.patient,phone:patient?.phone||patient?.whatsapp||"",confirmationStatus:form.status==="Confirmada"?"confirmed":form.status==="Cancelada"?"cancelled":"pending",whatsappStatus:form.whatsappStatus||"not_sent",confirmationSource:form.confirmationSource||"staff"};if(editing)await update("appointments",editing.id,payload);else await write("appointments",payload);setOpen(false);setEditing(null)};
- const editAppointment=appointment=>{if(!can("Agenda","appointments.edit"))return;setDetails(null);setEditing(appointment);setForm({...empty,...appointment});setOpen(true)};
+ const editAppointment=appointment=>{if(!can("Agenda","appointments.edit"))return;setDetails(null);setEditing(appointment);setForm({...empty,...appointment});setPatientSearch(appointment?.patient||"");setOpen(true)};
  const statusClass=status=>String(status||"Agendada").toLowerCase().replaceAll(" ","-");
  const changeStatus=async(status)=>{if(details){const permission=status==="Confirmada"?"appointments.confirm":status==="Cancelada"?"appointments.cancel":"appointments.edit";if(!can("Agenda",permission))return;const confirmationStatus=status==="Confirmada"?"confirmed":status==="Cancelada"?"cancelled":"pending";await update("appointments",details.id,{status,confirmationStatus,confirmationSource:"staff",confirmationRespondedAt:new Date().toISOString()});setDetails({...details,status,confirmationStatus})}};
  const confirmationLabel=item=>confirmationState(item)==="confirmed"?"Confirmada":confirmationState(item)==="cancelled"?"Cancelada":"Aguardando confirmação";
@@ -277,8 +398,8 @@ function Agenda({data,write,update,remove,can,onOpenRecord}){
  const dayView=()=> <div className="agendaTimeline">{Array.from({length:13},(_,index)=>{const hour=index+7,time=`${String(hour).padStart(2,"0")}:00`;return <div className="agendaHour" key={time}><span>{time}</span><div>{appointmentsFor(selectedDate).filter(item=>(item.startTime||item.time||"").startsWith(String(hour).padStart(2,"0"))).map(appointmentBlock)}</div></div>})}</div>;
  const weekView=()=> <div className="agendaWeek"><div className="agendaWeekHead"><span>Horário</span>{weekDates.map(value=><button key={value} className={value===selectedDate?"active":""} onClick={()=>setSelectedDate(value)}>{dateValue(value).toLocaleDateString("pt-BR",{weekday:"short"})}<b>{dateValue(value).getDate()}</b></button>)}</div>{Array.from({length:13},(_,index)=>{const hour=index+7;return <div className="agendaWeekRow" key={hour}><span>{String(hour).padStart(2,"0")}:00</span>{weekDates.map(value=><div key={value}>{appointmentsFor(value).filter(item=>(item.startTime||item.time||"").startsWith(String(hour).padStart(2,"0"))).map(appointmentBlock)}</div>)}</div>})}</div>;
  const monthView=()=>{const first=dateValue(selectedDate);first.setDate(1);const offset=first.getDay()===0?6:first.getDay()-1;const days=new Date(first.getFullYear(),first.getMonth()+1,0).getDate();return <div className="agendaMonth"><div className="agendaMonthHead">{["Seg","Ter","Qua","Qui","Sex","Sáb","Dom"].map(day=><span key={day}>{day}</span>)}</div><div className="agendaMonthGrid">{Array.from({length:offset+days},(_,index)=>{if(index<offset)return <div className="monthEmpty" key={`empty-${index}`}/>;const day=index-offset+1,value=new Date(first.getFullYear(),first.getMonth(),day).toISOString().slice(0,10);return <button className={value===selectedDate?"monthDay active":"monthDay"} key={value} onClick={()=>{setSelectedDate(value);setView("day")}}><b>{day}</b>{appointmentsFor(value).slice(0,3).map(appointmentBlock)}{appointmentsFor(value).length>3&&<small>+{appointmentsFor(value).length-3} consultas</small>}</button>})}</div></div>};
- return <section className="panel agendaPanel"><div className="agendaToolbar"><div><h3>Agenda</h3><small>{formatDate(selectedDate)}</small></div><div className="agendaToolbarActions"><button className="secondary" onClick={()=>setSelectedDate(today())}>Hoje</button><button className="iconBtn" onClick={()=>shiftDate(view==="week"?-7:view==="month"?-30:-1)} title="Anterior"><ChevronLeft size={18}/></button><button className="iconBtn" onClick={()=>shiftDate(view==="week"?7:view==="month"?30:1)} title="Próximo"><ChevronRight size={18}/></button><input type="date" value={selectedDate} onChange={event=>setSelectedDate(event.target.value)}/>{can("Agenda","appointments.create")&&<button className="primary" onClick={()=>{setEditing(null);setForm({...empty,date:selectedDate});setOpen(true)}}><Plus size={17}/> Nova consulta</button>}</div></div><div className="agendaControls"><div className="segmented"><button className={view==="day"?"active":""} onClick={()=>setView("day")}>Dia</button><button className={view==="week"?"active":""} onClick={()=>setView("week")}>Semana</button><button className={view==="month"?"active":""} onClick={()=>setView("month")}>Mês</button></div><label>Profissional<select value={professional} onChange={event=>setProfessional(event.target.value)}><option>Todos</option>{professionals.map(item=><option key={item}>{item}</option>)}</select></label></div>{view==="day"?dayView():view==="week"?weekView():monthView()}
- {open&&<Modal title={editing?"Editar consulta":"Nova consulta"} close={()=>{setOpen(false);setEditing(null)}}><div className="formGrid"><label>Paciente<select value={form.patientId||""} onChange={event=>updatePatient(event.target.value)}><option value="">Selecione</option>{data.patients.map(item=><option value={item.id} key={item.id}>{item.name}</option>)}</select></label><label>Profissional<select value={form.professional||""} onChange={event=>setForm({...form,professional:event.target.value})}><option value="">Selecione</option>{data.professionals.map(item=><option key={item.id}>{item.name}</option>)}</select></label><Input label="Data" type="date" v={form.date} set={value=>setForm({...form,date:value})}/><Input label="Horário inicial" type="time" v={form.startTime} set={value=>setForm({...form,startTime:value})}/><Input label="Horário final" type="time" v={form.endTime} set={value=>setForm({...form,endTime:value})}/><Input label="Procedimento" v={form.type} set={value=>setForm({...form,type:value})}/><label>Status<select value={form.status} onChange={event=>setForm({...form,status:event.target.value})}>{["Agendada","Confirmada","Em atendimento","Concluída","Cancelada","Faltou"].map(item=><option key={item}>{item}</option>)}</select></label><label>Observações<textarea value={form.notes||""} onChange={event=>setForm({...form,notes:event.target.value})}/></label></div><button className="primary full" onClick={save}>Salvar consulta</button></Modal>}
+ return <section className="panel agendaPanel"><div className="agendaToolbar"><div><h3>Agenda</h3><small>{formatDate(selectedDate)}</small></div><div className="agendaToolbarActions"><button className="secondary" onClick={()=>setSelectedDate(today())}>Hoje</button><button className="iconBtn" onClick={()=>shiftDate(view==="week"?-7:view==="month"?-30:-1)} title="Anterior"><ChevronLeft size={18}/></button><button className="iconBtn" onClick={()=>shiftDate(view==="week"?7:view==="month"?30:1)} title="Próximo"><ChevronRight size={18}/></button><input type="date" value={selectedDate} onChange={event=>setSelectedDate(event.target.value)}/>{can("Agenda","appointments.create")&&<button className="primary" onClick={()=>{setEditing(null);setForm({...empty,date:selectedDate});setPatientSearch("");setOpen(true)}}><Plus size={17}/> Nova consulta</button>}</div></div><div className="agendaControls"><div className="segmented"><button className={view==="day"?"active":""} onClick={()=>setView("day")}>Dia</button><button className={view==="week"?"active":""} onClick={()=>setView("week")}>Semana</button><button className={view==="month"?"active":""} onClick={()=>setView("month")}>Mês</button></div><label>Profissional<select value={professional} onChange={event=>setProfessional(event.target.value)}><option>Todos</option>{professionals.map(item=><option key={item}>{item}</option>)}</select></label></div>{view==="day"?dayView():view==="week"?weekView():monthView()}
+ {open&&<Modal title={editing?"Editar consulta":"Nova consulta"} close={()=>{setOpen(false);setEditing(null)}}><div className="formGrid"><PatientPicker patients={data.patients} value={form.patientId||""} search={patientSearch} setSearch={setPatientSearch} onChange={updatePatient}/><label>Profissional<select value={form.professional||""} onChange={event=>setForm({...form,professional:event.target.value})}><option value="">Selecione</option>{data.professionals.map(item=><option key={item.id}>{item.name}</option>)}</select></label><Input label="Data" type="date" v={form.date} set={value=>setForm({...form,date:value})}/><Input label="Horário inicial" type="time" v={form.startTime} set={value=>setForm({...form,startTime:value})}/><Input label="Horário final" type="time" v={form.endTime} set={value=>setForm({...form,endTime:value})}/><Input label="Procedimento" v={form.type} set={value=>setForm({...form,type:value})}/><label>Status<select value={form.status} onChange={event=>setForm({...form,status:event.target.value})}>{["Agendada","Confirmada","Em atendimento","Concluída","Cancelada","Faltou"].map(item=><option key={item}>{item}</option>)}</select></label><label>Observações<textarea value={form.notes||""} onChange={event=>setForm({...form,notes:event.target.value})}/></label></div><button className="primary full" onClick={save}>Salvar consulta</button></Modal>}
  {details&&<Modal title="Detalhes da consulta" close={()=>setDetails(null)}><div className="appointmentDetails"><b>{details.patient}</b><span>{details.date} • {details.startTime||details.time} - {details.endTime||""}</span><span>{details.professional||"Sem profissional"} • {details.type}</span><span className={`badge ${statusClass(details.status)}`}>{details.status}</span>{details.notes&&<p>{details.notes}</p>}</div><div className="modalActions"><AppointmentWhatsappButton patient={appointmentPatient(details)} appointment={details}/>{can("Agenda","appointments.edit")&&<button className="secondary" onClick={()=>editAppointment(details)}><Pencil size={15}/> Editar</button>}{can("Agenda","appointments.confirm")&&<button className="secondary" onClick={()=>changeStatus("Confirmada")}>Confirmar</button>}{can("Agenda","appointments.edit")&&<button className="secondary" onClick={()=>changeStatus("Concluída")}>Concluir</button>}{can("Agenda","appointments.cancel")&&<button className="secondary" onClick={()=>changeStatus("Cancelada")}>Cancelar</button>}{can("Agenda","appointments.delete")&&<button className="danger" onClick={async()=>{await remove("appointments",details.id);setDetails(null)}}><Trash2 size={15}/> Excluir</button>}<button className="primary" onClick={()=>{onOpenRecord?.(details.patientId);setDetails(null)}}>Abrir prontuário</button></div></Modal>}
  </section>;
 }
@@ -341,7 +462,7 @@ const cycleInfant = t => {
   const i = statuses.findIndex(x => x.key === current);
   setInfantToothStates(x => ({ ...x, [t]: statuses[(i + 1) % statuses.length].key }));
 };
- const saveOdontogram=async()=>{if(!patient)return;setSaving(true);const existing=data.records.find(r=>r.kind==="odontogram"&&r.patientId===patient.id),payload={kind:"odontogram",patientId:patient.id,patient:patient.name,toothStates,date:today(),isLocked:false};if(existing)await update("records",existing.id,payload);else await write("records",payload);setSaving(false)};
+ const saveOdontogram=async()=>{if(!patient)return;setSaving(true);const existing=data.records.find(r=>r.kind==="odontogram"&&r.patientId===patient.id),payload={kind:"odontogram",patientId:patient.id,patient:patient.name,toothStates,infantToothStates,date:today(),isLocked:false};if(existing)await update("records",existing.id,payload);else await write("records",payload);setSaving(false)};
  const saveEvolution=async()=>{if(!patient||(!note.trim()&&!complaint.trim()&&!diagnosis.trim()))return;await write("records",{kind:"evolution",patientId:patient.id,patient:patient.name,note:note.trim(),complaint:complaint.trim(),diagnosis:diagnosis.trim(),date:today(),isLocked:false});setNote("");};
  const saveAnamnesis=async()=>{if(!patient)return;setSaving(true);const existing=data.records.find(r=>r.kind==="anamnesis"&&r.patientId===patient.id),payload={kind:"anamnesis",clinicId:userId,uid,patientId:patient.id,patient:patient.name,data:{...(existing?.data||{}),...anam},date:today(),isLocked:false};if(existing)await update("records",existing.id,payload);else await write("records",payload);setSaving(false)};
  useEffect(()=>{setLocalAttachments([]);setAttachmentStatus("");setSelectedFile(null);setSelectedPreview(null);setUploadProgress(0);},[patient?.id]);
@@ -644,24 +765,103 @@ function Professionals({data,write,remove,clinicId,role}){
  const addEmployee=async()=>{if(!employee.name.trim()||!employee.email.trim()||employee.password.length<6)return;setSaving(true);try{const account=await createEmployeeAccount(employee.email.trim(),employee.password,employee.name.trim());await addClinicMember(clinicId,account,employee.role,{phone:employee.phone,permissions:employee.permissions});setMembers(await getClinicMembers(clinicId));setEmployee({name:"",email:"",phone:"",role:"dentist",password:"",permissions:["Agenda"]});setEmployeeOpen(false)}catch(error){alert(error.code==="auth/email-already-in-use"?"Este e-mail já possui uma conta.":"Não foi possível cadastrar o funcionário.")}finally{setSaving(false)}};
  return <section className="panel"><div className="toolbar"><div><h3>Equipe e profissionais</h3><small>Gerencie os profissionais e os acessos da clínica.</small></div>{tab==="professionals"?<button className="primary" onClick={()=>setOpen(true)}><Plus size={18}/> Novo profissional</button>:canManage&&<button className="primary" onClick={()=>setEmployeeOpen(true)}><UserPlus size={18}/> Novo funcionário</button>}</div><div className="recordTabs teamTabs"><button className={tab==="professionals"?"active":""} onClick={()=>setTab("professionals")}>Profissionais</button><button className={tab==="team"?"active":""} onClick={()=>setTab("team")}>Equipe</button></div>{tab==="professionals"?data.professionals.map(p=><div className="professional" key={p.id}><div className="avatar">DR</div><div><b>{p.name}</b><small>{p.specialty}</small></div><span className="badge ativo">{p.status}</span><button className="iconBtn" onClick={()=>remove("professionals",p.id)}><Trash2 size={16}/></button></div>):<div className="teamList">{!canManage&&<p className="empty">Somente administradores podem gerenciar a equipe.</p>}{members.map(member=><div className="professional" key={member.id}><div className="avatar">{member.name?.slice(0,2).toUpperCase()}</div><div><b>{member.name}</b><small>{member.email} • {roles.find(item=>item.value===member.role)?.label||member.role}</small></div><span className="badge ativo">{member.status||"Ativo"}</span></div>)}</div>}{open&&<Modal title="Novo profissional" close={()=>setOpen(false)}><Input label="Nome" v={form.name} set={v=>setForm({...form,name:v})}/><Input label="Especialidade" v={form.specialty} set={v=>setForm({...form,specialty:v})}/><button className="primary full" onClick={addProfessional}>Cadastrar</button></Modal>}{employeeOpen&&<Modal title="Novo funcionário" close={()=>setEmployeeOpen(false)}><Input label="Nome completo" v={employee.name} set={v=>setEmployee({...employee,name:v})}/><Input label="E-mail" type="email" v={employee.email} set={v=>setEmployee({...employee,email:v})}/><Input label="Telefone" v={employee.phone} set={v=>setEmployee({...employee,phone:v})}/><Input label="Senha inicial" type="password" v={employee.password} set={v=>setEmployee({...employee,password:v})}/><label>Cargo<select value={employee.role} onChange={event=>setEmployee({...employee,role:event.target.value})}>{roles.map(item=><option value={item.value} key={item.value}>{item.label}</option>)}</select></label><div className="permissionPicker"><b>Permissões</b>{permissionOptions.map(item=><label key={item}><input type="checkbox" checked={employee.permissions.includes(item)} onChange={event=>setEmployee({...employee,permissions:event.target.checked?[...employee.permissions,item]:employee.permissions.filter(permission=>permission!==item)})}/>{item}</label>)}</div><button className="primary full" disabled={saving} onClick={addEmployee}>{saving?"Criando conta...":"Criar funcionário"}</button></Modal>}</section>;
 }
-function ProfessionalManager({data,write,clinicId,role}){
- const [open,setOpen]=useState(false),[selected,setSelected]=useState(null),[saving,setSaving]=useState(false),[members,setMembers]=useState([]);
+function ProfessionalManager({data,write,remove,clinicId,role}){
+ const [open,setOpen]=useState(false),[selected,setSelected]=useState(null),[saving,setSaving]=useState(false),[members,setMembers]=useState([]),[permissionMode,setPermissionMode]=useState("preset");
  const calendarColors=["#2563eb","#7c3aed","#0f766e","#c2410c","#be123c","#4f46e5"];
  const canManage=role==="owner"||role==="admin";
- const permissions=["patients.view","patients.create","patients.edit","patients.delete","appointments.view","appointments.create","appointments.edit","appointments.confirm","appointments.cancel","appointments.delete","records.view","records.create","records.edit","records.delete","finances.view","finances.create","finances.edit","finances.payments","stock.view","stock.create","stock.edit","stock.delete","stock.in","stock.out","professionals.view","professionals.create","professionals.edit","professionals.block","professionals.delete","reports.view","settings.view","settings.edit"];
+ const permissionGroups=[
+  {key:"patients",label:"Pacientes",items:["patients.view","patients.create","patients.edit","patients.delete"]},
+  {key:"appointments",label:"Agenda",items:["appointments.view","appointments.create","appointments.edit","appointments.confirm","appointments.cancel","appointments.delete"]},
+  {key:"records",label:"Prontuário",items:["records.view","records.create","records.edit","records.delete"]},
+  {key:"finances",label:"Financeiro",items:["finances.view","finances.create","finances.edit","finances.payments"]},
+  {key:"stock",label:"Estoque",items:["stock.view","stock.create","stock.edit","stock.delete","stock.in","stock.out"]},
+  {key:"professionals",label:"Equipe",items:["professionals.view","professionals.create","professionals.edit","professionals.block","professionals.delete"]},
+  {key:"reports",label:"Relatórios",items:["reports.view"]},
+  {key:"settings",label:"Configurações",items:["settings.view","settings.edit"]}
+ ];
+ const permissions=permissionGroups.flatMap(group=>group.items);
  const labels={"patients.view":"Visualizar pacientes","patients.create":"Criar pacientes","patients.edit":"Editar pacientes","patients.delete":"Excluir pacientes","appointments.view":"Visualizar agenda","appointments.create":"Criar consultas","appointments.edit":"Editar consultas","appointments.confirm":"Confirmar consultas","appointments.cancel":"Cancelar consultas","appointments.delete":"Excluir consultas","records.view":"Visualizar prontuários","records.create":"Criar evolução","records.edit":"Editar prontuário","records.delete":"Excluir informações","finances.view":"Visualizar financeiro","finances.create":"Criar lançamentos","finances.edit":"Editar lançamentos","finances.payments":"Registrar pagamentos","stock.view":"Visualizar estoque","stock.create":"Criar itens","stock.edit":"Editar itens","stock.delete":"Excluir itens","stock.in":"Registrar entrada","stock.out":"Registrar saída","professionals.view":"Visualizar equipe","professionals.create":"Criar profissionais","professionals.edit":"Editar profissionais","professionals.block":"Bloquear profissionais","professionals.delete":"Excluir profissionais","reports.view":"Visualizar relatórios","settings.view":"Visualizar configurações","settings.edit":"Alterar configurações"};
+ const permissionPresets={
+  owner:{label:"Administrador",role:"admin",permissions},
+  dentist:{label:"Dentista",role:"dentist",permissions:["patients.view","patients.create","patients.edit","appointments.view","appointments.create","appointments.edit","appointments.confirm","appointments.cancel","records.view","records.create","records.edit","reports.view"]},
+  secretary:{label:"Secretária",role:"secretary",permissions:["patients.view","patients.create","patients.edit","appointments.view","appointments.create","appointments.edit","appointments.confirm","appointments.cancel","appointments.delete","finances.view","reports.view"]},
+  reception:{label:"Recepção",role:"reception",permissions:["patients.view","patients.create","patients.edit","appointments.view","appointments.create","appointments.edit","appointments.confirm","appointments.cancel"]},
+  assistant:{label:"Auxiliar",role:"assistant",permissions:["patients.view","appointments.view","appointments.create","records.view","records.create","stock.view","stock.in","stock.out"]},
+  finance:{label:"Financeiro",role:"finance",permissions:["finances.view","finances.create","finances.edit","finances.payments","reports.view"]}
+ };
  const empty={name:"",email:"",phone:"",whatsapp:"",cpf:"",rg:"",birth:"",address:"",profession:"",position:"",specialty:"",cro:"",croState:"",hireDate:"",status:"Ativo",role:"Outro",calendarColor:calendarColors[data.professionals.length%calendarColors.length],permissions:["appointments.view"]};
  const [form,setForm]=useState(empty);
  useEffect(()=>{if(clinicId&&canManage)getClinicMembers(clinicId).then(setMembers).catch(()=>{});},[clinicId,canManage]);
  useEffect(()=>{const handler=event=>setForm(value=>({...value,calendarColor:event.detail}));window.addEventListener("professionalColorChange",handler);return()=>window.removeEventListener("professionalColorChange",handler)},[]);
- useEffect(()=>{const handler=()=>{if(canManage){window.__professionalCalendarColor=empty.calendarColor;setSelected(null);setForm(empty);setOpen(true)}};window.addEventListener("newItem",handler);return()=>window.removeEventListener("newItem",handler)},[canManage,empty.calendarColor]);
- const openProfile=profile=>{const member=members.find(item=>item.uid===profile.accessUid);const calendarColor=profile.calendarColor||calendarColors[data.professionals.findIndex(item=>item.id===profile.id)%calendarColors.length];window.__professionalCalendarColor=calendarColor;setSelected(profile);setForm({...empty,...profile,calendarColor,...(member||{}),permissions:member?.permissions||profile.permissions||[]});setOpen(true)};
+ const applyPreset=key=>{const preset=permissionPresets[key];setForm(value=>({...value,role:preset.role,permissions:[...preset.permissions]}));setPermissionMode("preset")};
+ const togglePermission=key=>{setPermissionMode("custom");setForm(value=>{const current=value.permissions||[];return {...value,permissions:current.includes(key)?current.filter(item=>item!==key):[...current,key]}})};
+ const toggleGroup=items=>{setPermissionMode("custom");setForm(value=>{const current=value.permissions||[],all=items.every(item=>current.includes(item));return {...value,permissions:all?current.filter(item=>!items.includes(item)):Array.from(new Set([...current,...items]))}})};
+ const deleteProfessional=async profile=>{
+   if(!canManage)return;
+   const linked=Boolean(profile.accessUid||profile.uid);
+   const msg=linked?`Excluir o profissional "${profile.name}"? O cadastro será removido e o acesso ao sistema será bloqueado.`:`Excluir o profissional "${profile.name}"? Esta ação não pode ser desfeita.`;
+   if(!window.confirm(msg))return;
+   try{
+     if(linked){const uid=profile.accessUid||profile.uid;await updateClinicMember(clinicId,uid,{status:"Bloqueado",permissions:[]});}
+     await remove("professionals",profile.id);
+     if(linked)setMembers(await getClinicMembers(clinicId));
+     if(selected?.id===profile.id){setOpen(false);setSelected(null);}
+   }catch(error){alert("Não foi possível excluir o profissional. Verifique suas permissões e tente novamente.");}
+ };
+ const openProfile=profile=>{const member=members.find(item=>item.uid===profile.accessUid);const calendarColor=profile.calendarColor||calendarColors[data.professionals.findIndex(item=>item.id===profile.id)%calendarColors.length];window.__professionalCalendarColor=calendarColor;setSelected(profile);setForm({...empty,...profile,calendarColor,...(member||{}),permissions:member?.permissions||profile.permissions||[]});setPermissionMode("preset");setOpen(true)};
  const saveProfile=async()=>{if(!form.name.trim())return;if(!selected&&form.loginEmail&&(!form.initialPassword||form.initialPassword!==form.confirmPassword)){alert("A senha e a confirmação precisam ser iguais.");return;}setSaving(true);try{let accessUid=form.uid||form.accessUid;if(!accessUid&&form.loginEmail&&form.initialPassword){const account=await createEmployeeAccount(form.loginEmail.trim(),form.initialPassword,form.name.trim());accessUid=account.uid;await addClinicMember(clinicId,account,form.role,{phone:form.phone,permissions:form.permissions,status:form.accessStatus||"Ativo"});}const profile={...form,accessUid,uid:accessUid};delete profile.initialPassword;delete profile.confirmPassword;delete profile.loginEmail;await (selected?updateItem(clinicId,"professionals",selected.id,profile):addItem(clinicId,"professionals",profile));if(accessUid)await updateClinicMember(clinicId,accessUid,{uid:accessUid,clinicId,name:form.name,email:form.loginEmail||form.email,phone:form.phone,whatsapp:form.whatsapp,cpf:form.cpf,rg:form.rg,birth:form.birth,address:form.address,profession:form.profession,position:form.position,specialty:form.specialty,cro:form.cro,croState:form.croState,hireDate:form.hireDate,role:form.role,permissions:form.permissions,status:form.accessStatus||form.status||"Ativo",notes:form.notes});setMembers(await getClinicMembers(clinicId));setOpen(false);setSelected(null)}catch(error){alert(error.code==="auth/email-already-in-use"?"Este e-mail já possui uma conta.":"Não foi possível salvar o profissional.")}finally{setSaving(false)}};
- const newProfile=()=>{window.__professionalCalendarColor=empty.calendarColor;setSelected(null);setForm(empty);setOpen(true)};
- return <section className="panel"><div className="toolbar"><div><h3>Profissionais</h3><small>Selecione um profissional para abrir a ficha completa.</small></div>{canManage&&<button className="primary" onClick={newProfile}><Plus size={18}/> Novo profissional</button>}</div><div className="professionalList">{data.professionals.map(profile=><button className="professional" key={profile.id} onClick={()=>openProfile(profile)}><div className="avatar">{profile.name?.slice(0,2).toUpperCase()}</div><div><b>{profile.name}</b><small>{profile.specialty||profile.position||"Profissional"}</small></div><span className={`badge ${String(profile.status||"Ativo").toLowerCase()}`}>{profile.status||"Ativo"}</span><Pencil size={16}/></button>)}{!data.professionals.length&&<Empty text="Nenhum profissional cadastrado."/>}</div>{open&&<Modal title={selected?"Ficha do profissional":"Novo profissional"} close={()=>{setOpen(false);setSelected(null)}}><div className="formGrid"><Input label="Nome completo" v={form.name} set={v=>setForm({...form,name:v})}/><Input label="E-mail" type="email" v={form.email||form.loginEmail} set={v=>setForm({...form,email:v,loginEmail:v})}/><Input label="CPF" v={form.cpf} set={v=>setForm({...form,cpf:v})}/><Input label="RG" v={form.rg} set={v=>setForm({...form,rg:v})}/><Input label="Data de nascimento" type="date" v={form.birth} set={v=>setForm({...form,birth:v})}/><Input label="Telefone" v={form.phone} set={v=>setForm({...form,phone:v})}/><Input label="WhatsApp" v={form.whatsapp} set={v=>setForm({...form,whatsapp:v})}/><Input label="Endereço" v={form.address} set={v=>setForm({...form,address:v})}/><Input label="Profissão" v={form.profession} set={v=>setForm({...form,profession:v})}/><Input label="Cargo / função" v={form.position} set={v=>setForm({...form,position:v})}/><Input label="Especialidade" v={form.specialty} set={v=>setForm({...form,specialty:v})}/><Input label="CRO" v={form.cro} set={v=>setForm({...form,cro:v})}/><Input label="UF do CRO" v={form.croState} set={v=>setForm({...form,croState:v})}/><Input label="Data de contratação" type="date" v={form.hireDate} set={v=>setForm({...form,hireDate:v})}/><label>Status<select value={form.status} onChange={e=>setForm({...form,status:e.target.value,accessStatus:e.target.value})}><option>Ativo</option><option>Inativo</option><option>Bloqueado</option></select></label><label>Observações<textarea value={form.notes||""} onChange={e=>setForm({...form,notes:e.target.value})}/></label></div><h4>ACESSO AO SISTEMA</h4><div className="formGrid"><Input label="E-mail de login" type="email" v={form.loginEmail||form.email} set={v=>setForm({...form,loginEmail:v,email:v})}/>{!selected&&<><Input label="Senha inicial" type="password" v={form.initialPassword||""} set={v=>setForm({...form,initialPassword:v})}/><Input label="Confirmar senha" type="password" v={form.confirmPassword||""} set={v=>setForm({...form,confirmPassword:v})}/></>}<label>Status do acesso<select value={form.accessStatus||form.status||"Ativo"} onChange={e=>setForm({...form,accessStatus:e.target.value,status:e.target.value})}><option>Ativo</option><option>Bloqueado</option></select></label><label>Perfil / função<input value={form.role||"Outro"} onChange={e=>setForm({...form,role:e.target.value})}/></label></div><h4>Permissões de acesso</h4><div className="permissionPicker">{permissions.map(key=><label key={key}><input type="checkbox" checked={(form.permissions||[]).includes(key)} onChange={e=>setForm({...form,permissions:e.target.checked?[...(form.permissions||[]),key]:(form.permissions||[]).filter(item=>item!==key)})}/>{labels[key]}</label>)}</div><button className="primary full" disabled={saving} onClick={saveProfile}>{saving?"Salvando...":"Salvar profissional"}</button></Modal>}</section>;
+ const newProfile=()=>{window.__professionalCalendarColor=empty.calendarColor;setSelected(null);setForm(empty);setPermissionMode("preset");setOpen(true)};
+ const selectedCount=(form.permissions||[]).length;
+ return <section className="panel"><div className="toolbar"><div><h3>Profissionais</h3><small>Cadastre, personalize acessos e remova profissionais com segurança.</small></div>{canManage&&<button className="primary" onClick={newProfile}><Plus size={18}/> Novo profissional</button>}</div><div className="professionalList">{data.professionals.map(profile=><div className="professionalRow" key={profile.id}><button className="professional" onClick={()=>openProfile(profile)}><div className="avatar">{profile.name?.slice(0,2).toUpperCase()}</div><div><b>{profile.name}</b><small>{profile.specialty||profile.position||"Profissional"}{profile.permissions?.length?` • ${profile.permissions.length} permissões`:""}</small></div><span className={`badge ${String(profile.status||"Ativo").toLowerCase()}`}>{profile.status||"Ativo"}</span><Pencil size={16}/></button>{canManage&&<button type="button" className="iconBtn dangerBtn professionalDelete" title="Excluir profissional" onClick={()=>deleteProfessional(profile)}><Trash2 size={16}/></button>}</div>)}{!data.professionals.length&&<Empty text="Nenhum profissional cadastrado."/>}</div>{open&&<Modal title={selected?"Ficha do profissional":"Novo profissional"} close={()=>{setOpen(false);setSelected(null)}}><div className="formGrid"><Input label="Nome completo" v={form.name} set={v=>setForm({...form,name:v})}/><Input label="E-mail" type="email" v={form.email||form.loginEmail} set={v=>setForm({...form,email:v,loginEmail:v})}/><Input label="CPF" v={form.cpf} set={v=>setForm({...form,cpf:v})}/><Input label="RG" v={form.rg} set={v=>setForm({...form,rg:v})}/><Input label="Data de nascimento" type="date" v={form.birth} set={v=>setForm({...form,birth:v})}/><Input label="Telefone" v={form.phone} set={v=>setForm({...form,phone:v})}/><Input label="WhatsApp" v={form.whatsapp} set={v=>setForm({...form,whatsapp:v})}/><Input label="Endereço" v={form.address} set={v=>setForm({...form,address:v})}/><Input label="Profissão" v={form.profession} set={v=>setForm({...form,profession:v})}/><Input label="Cargo / função" v={form.position} set={v=>setForm({...form,position:v})}/><Input label="Especialidade" v={form.specialty} set={v=>setForm({...form,specialty:v})}/><Input label="CRO" v={form.cro} set={v=>setForm({...form,cro:v})}/><Input label="UF do CRO" v={form.croState} set={v=>setForm({...form,croState:v})}/><Input label="Data de contratação" type="date" v={form.hireDate} set={v=>setForm({...form,hireDate:v})}/><label>Status<select value={form.status} onChange={e=>setForm({...form,status:e.target.value,accessStatus:e.target.value})}><option>Ativo</option><option>Inativo</option><option>Bloqueado</option></select></label><label>Observações<textarea value={form.notes||""} onChange={e=>setForm({...form,notes:e.target.value})}/></label></div><h4>ACESSO AO SISTEMA</h4><div className="formGrid"><Input label="E-mail de login" type="email" v={form.loginEmail||form.email} set={v=>setForm({...form,loginEmail:v,email:v})}/>{!selected&&<><Input label="Senha inicial" type="password" v={form.initialPassword||""} set={v=>setForm({...form,initialPassword:v})}/><Input label="Confirmar senha" type="password" v={form.confirmPassword||""} set={v=>setForm({...form,confirmPassword:v})}/></>}<label>Status do acesso<select value={form.accessStatus||form.status||"Ativo"} onChange={e=>setForm({...form,accessStatus:e.target.value,status:e.target.value})}><option>Ativo</option><option>Bloqueado</option></select></label><label>Perfil / função<select value={form.role||"Outro"} onChange={e=>setForm({...form,role:e.target.value})}><option value="admin">Administrador</option><option value="dentist">Dentista</option><option value="secretary">Secretária</option><option value="reception">Recepção</option><option value="assistant">Auxiliar</option><option value="finance">Financeiro</option><option value="Outro">Outro</option></select></label></div><div className="permissionHeader"><div><h4>Permissões de acesso</h4><small>{selectedCount} selecionadas • escolha um perfil pronto ou personalize por módulo</small></div><div className="permissionCount">{selectedCount}/{permissions.length}</div></div><div className="permissionPresets">{Object.entries(permissionPresets).map(([key,preset])=><button type="button" key={key} className={permissionMode==="preset"&&form.role===preset.role&&preset.permissions.length===selectedCount?"active":""} onClick={()=>applyPreset(key)}><b>{preset.label}</b><small>{preset.permissions.length} acessos</small></button>)}<button type="button" className={permissionMode==="custom"?"active":""} onClick={()=>setPermissionMode("custom")}><b>Personalizado</b><small>Escolher manualmente</small></button></div><div className="permissionQuick"><button type="button" onClick={()=>{setForm(v=>({...v,permissions:[...permissions]}));setPermissionMode("custom")}}>Selecionar todos</button><button type="button" onClick={()=>{setForm(v=>({...v,permissions:[]}));setPermissionMode("custom")}}>Limpar todos</button></div><div className="permissionGroups">{permissionGroups.map(group=>{const active=group.items.filter(item=>(form.permissions||[]).includes(item)).length;const all=active===group.items.length;return <div className="permissionGroup" key={group.key}><div className="permissionGroupHead"><div><b>{group.label}</b><small>{active}/{group.items.length} permissões</small></div><button type="button" className={all?"groupAll active":"groupAll"} onClick={()=>toggleGroup(group.items)}>{all?<><Check size={14}/> Tudo liberado</>:"Liberar tudo"}</button></div><div className="permissionGroupGrid">{group.items.map(key=><label key={key} className={(form.permissions||[]).includes(key)?"checked":""}><input type="checkbox" checked={(form.permissions||[]).includes(key)} onChange={()=>togglePermission(key)}/><span>{labels[key]}</span></label>)}</div></div>})}</div><button className="primary full" disabled={saving} onClick={saveProfile}>{saving?"Salvando...":"Salvar profissional"}</button>{selected&&canManage&&<button type="button" className="danger full" disabled={saving} onClick={()=>deleteProfessional(selected)}><Trash2 size={16}/> Excluir profissional</button>}</Modal>}</section>;
 }
 function Reports({data}){return <><div className="cards"><Card icon={Users} title="Total pacientes" value={data.patients.length} note="Base cadastrada"/><Card icon={CalendarDays} title="Consultas" value={data.appointments.length} note="Agenda"/><Card icon={DollarSign} title="Movimentado" value={money(data.finances.reduce((a,b)=>a+Number(b.value||0),0))} note="Lançamentos"/><Card icon={Package} title="Itens estoque" value={data.stock.length} note="Cadastrados"/></div><section className="panel"><h3>Indicadores</h3><div className="quick"><span>Pagamentos recebidos: <b>{money(data.finances.filter(x=>x.status==="Pago").reduce((a,b)=>a+Number(b.value||0),0))}</b></span><span>Contas pendentes: <b>{money(data.finances.filter(x=>x.status!=="Pago").reduce((a,b)=>a+Number(b.value||0),0))}</b></span><span>Estoque abaixo do mínimo: <b>{data.stock.filter(x=>Number(x.quantity)<Number(x.min)).length}</b></span></div></section></>}
-function SettingsPage({clinic,save}){const [form,setForm]=useState({name:clinic?.name||"",phone:clinic?.phone||"",address:clinic?.address||""});useEffect(()=>setForm({name:clinic?.name||"",phone:clinic?.phone||"",address:clinic?.address||""}),[clinic]);return <section className="panel settings"><h3>Configurações da clínica</h3><label>Nome da clínica<input value={form.name} onChange={e=>setForm({...form,name:e.target.value})}/></label><label>Telefone<input value={form.phone} onChange={e=>setForm({...form,phone:e.target.value})}/></label><label>Endereço<input value={form.address} onChange={e=>setForm({...form,address:e.target.value})}/></label><button className="primary" onClick={() => save(form)}>Salvar alterações</button>{APK_DOWNLOAD_URL ? (<a href={APK_DOWNLOAD_URL} className="secondary" style={{marginLeft:"0.5rem"}} download><Download size={18}/> Baixar APK Android</a>) : (<button className="secondary" disabled title="URL do APK não configurada" style={{marginLeft:"0.5rem"}}>Baixar APK Android</button>)}</section>}
+function SettingsPage({clinic,preferences,save}){
+ const defaults={...DEFAULT_PREFERENCES,...(clinic?.preferences||{}),...(preferences||{})};
+ const [form,setForm]=useState({name:clinic?.name||"",phone:clinic?.phone||"",address:clinic?.address||""});
+ const [prefs,setPrefs]=useState(defaults);
+ const [saved,setSaved]=useState(false);
+ useEffect(()=>{setForm({name:clinic?.name||"",phone:clinic?.phone||"",address:clinic?.address||""});setPrefs({...DEFAULT_PREFERENCES,...(clinic?.preferences||{}),...(preferences||{})})},[clinic,preferences]);
+ const updatePref=(key,value)=>setPrefs(p=>({...p,[key]:value}));
+ const [savingAll,setSavingAll]=useState(false);
+ const [saveError,setSaveError]=useState("");
+ const saveAll=async()=>{
+   setSavingAll(true);
+   setSaveError("");
+   try{
+     await save({...form,preferences:prefs});
+     setSaved(true);
+     setTimeout(()=>setSaved(false),1800);
+   }catch(error){
+     setSaveError(error?.message||"Não foi possível salvar a personalização.");
+   }finally{
+     setSavingAll(false);
+   }
+ };
+ return <div className="settingsStack">
+  <section className="panel settingsHero"><div><span className="eyebrow"><Sparkles size={13}/> SEU ESPAÇO, SEU JEITO</span><h3>Personalize o OrvittaClinic</h3><p>Deixe a experiência da clínica com a sua identidade e escolha como o sistema deve se comportar.</p></div><div className="settingsHeroIcon"><Palette size={30}/></div></section>
+  <section className="panel settings"><h3>Dados da clínica</h3><div className="formGrid"><Input label="Nome da clínica" v={form.name} set={v=>setForm({...form,name:v})}/><Input label="Telefone" v={form.phone} set={v=>setForm({...form,phone:v})}/><label className="fullField">Endereço<textarea value={form.address} onChange={e=>setForm({...form,address:e.target.value})}/></label></div></section>
+  <section className="panel customizationPanel">
+   <div className="sectionTitle"><div><h4><Palette size={17}/> Identidade visual</h4><small>Escolha uma cor principal para botões, destaques e navegação.</small></div></div>
+   <div className="accentGrid">{ACCENT_PRESETS.map(item=><button type="button" key={item.value} className={`accentChoice ${prefs.accent===item.value?"selected":""}`} onClick={()=>updatePref("accent",item.value)}><span className="accentDot" style={{background:item.value}}/><span>{item.name}</span>{prefs.accent===item.value&&<Check size={15}/>}</button>)}<label className="accentChoice custom"><input type="color" value={prefs.accent} onChange={e=>updatePref("accent",e.target.value)}/><span>Personalizada</span>{!ACCENT_PRESETS.some(x=>x.value===prefs.accent)&&<Check size={15}/>}</label></div>
+  </section>
+  <section className="panel customizationPanel"><div className="sectionTitle"><div><h4><SlidersHorizontal size={17}/> Experiência</h4><small>Configurações individuais ficam salvas na sua clínica.</small></div></div>
+   <div className="preferenceGrid">
+    <div className="preferenceCard"><b>Tela inicial</b><span>Onde abrir o sistema</span><div className="choiceRow">{[["Dashboard","Dashboard"],["Agenda","Agenda"],["Pacientes","Pacientes"]].map(([value,label])=><button type="button" className={prefs.startPage===value?"active":""} onClick={()=>updatePref("startPage",value)} key={value}>{label}</button>)}</div></div>
+    <div className="preferenceCard"><b>Agenda padrão</b><span>Visualização ao entrar na agenda</span><div className="choiceRow">{[["day","Dia"],["week","Semana"],["month","Mês"]].map(([value,label])=><button type="button" className={prefs.agendaView===value?"active":""} onClick={()=>updatePref("agendaView",value)} key={value}>{label}</button>)}</div></div>
+    <div className="preferenceCard"><b>Densidade</b><span>Mais espaço ou mais informação na tela</span><div className="choiceRow">{[["comfortable","Confortável"],["compact","Compacta"]].map(([value,label])=><button type="button" className={prefs.density===value?"active":""} onClick={()=>updatePref("density",value)} key={value}>{label}</button>)}</div></div>
+    <div className="preferenceCard"><b>Animações</b><span>Movimentos suaves da interface</span><button type="button" className={`toggleChoice ${prefs.animations?"on":""}`} onClick={()=>updatePref("animations",!prefs.animations)}><span>{prefs.animations?"Ativadas":"Desativadas"}</span><span className="toggleDot"/></button></div>
+   </div>
+  </section>
+  <section className="panel settings"><div className="settingsSaveRow"><div><b>Pronto para deixar com a sua cara?</b><small>As alterações visuais são aplicadas na hora e ficam salvas na clínica.</small>{saveError&&<small style={{color:"#b42318",display:"block",marginTop:"6px"}}>{saveError}</small>}</div><button className="primary" onClick={saveAll} disabled={savingAll}>{saved?<><Check size={17}/> Salvo</>:savingAll?"Salvando...":"Salvar personalização"}</button></div></section>
+  {APK_DOWNLOAD_URL&&<section className="panel settings"><h3>Aplicativo Android</h3><a href={APK_DOWNLOAD_URL} className="secondary" download><Download size={18}/> Baixar APK Android <small>{APK_VERSION}</small></a></section>}
+ </div>
+}
+
+function PatientPicker({patients,value,search,setSearch,onChange}){
+ const filtered=useMemo(()=>{const q=String(search||"").trim().toLowerCase();return patients.filter(p=>!q||`${p.name||""} ${p.phone||""} ${p.email||""}`.toLowerCase().includes(q)).slice(0,8)},[patients,search]);
+ const selected=patients.find(p=>String(p.id)===String(value));
+ return <div className="patientPicker"><label>Paciente <span>Digite para localizar rapidamente</span></label><div className="patientSearchBox"><Search size={16}/><input value={search} onChange={e=>{setSearch(e.target.value);if(value&&e.target.value!==selected?.name)setSearch(e.target.value)}} placeholder="Pesquisar por nome, telefone ou e-mail..."/><kbd>⌘K</kbd></div>{selected&&<div className="selectedPatient"><span className="patientMiniAvatar">{(selected.name||"PA").slice(0,2).toUpperCase()}</span><div><b>{selected.name}</b><small>{selected.phone||selected.email||"Paciente selecionado"}</small></div><button type="button" onClick={()=>{setSearch("");onChange("")}} title="Limpar paciente">×</button></div>}<div className="patientResults">{filtered.map(patient=><button type="button" key={patient.id} className={`patientResult ${String(value)===String(patient.id)?"selected":""}`} onClick={()=>onChange(patient.id)}><span className="patientMiniAvatar">{(patient.name||"PA").slice(0,2).toUpperCase()}</span><span><b>{patient.name}</b><small>{patient.phone||patient.email||"Sem contato"}</small></span>{String(value)===String(patient.id)&&<Check size={16}/>}</button>)}{!filtered.length&&<div className="patientPickerEmpty">Nenhum paciente encontrado.</div>}</div></div>}
+
 function Modal({title,close,children,className=""}){return <div className="overlay"><div className={`modal ${className}`}><div className="modalHead"><h3>{title}</h3><button onClick={close}>×</button></div>{children}</div></div>}
 function Input({label,v,set,type="text"}){return <label>{label}<input type={type} value={v} onChange={e=>set(e.target.value)}/>{label==="UF do CRO"&&<><span>Cor na agenda</span><input className="colorPicker" type="color" defaultValue={window.__professionalCalendarColor||"#2563eb"} onChange={e=>window.dispatchEvent(new CustomEvent("professionalColorChange",{detail:e.target.value}))}/></>}</label>}
 function Empty({text}){return <div className="empty">{text}</div>}
